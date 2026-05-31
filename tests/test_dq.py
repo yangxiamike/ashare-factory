@@ -1,8 +1,6 @@
 from pathlib import Path
 
-import pytest
-
-duckdb = pytest.importorskip("duckdb")
+import duckdb
 
 from ashare_data.dq import build_settings_for_path, run_quality_checks
 
@@ -11,62 +9,60 @@ def _prepare_database(db_path: Path) -> None:
     with duckdb.connect(str(db_path)) as con:
         con.execute(
             """
-            create table daily (
-                ts_code varchar,
-                trade_date varchar,
-                open double,
-                high double,
-                low double,
-                close double,
-                vol double,
-                amount double
+            CREATE TABLE daily (
+                ts_code VARCHAR,
+                trade_date VARCHAR,
+                open DOUBLE,
+                high DOUBLE,
+                low DOUBLE,
+                close DOUBLE,
+                vol DOUBLE,
+                amount DOUBLE
             )
             """
         )
         con.execute(
             """
-            insert into daily values
+            INSERT INTO daily VALUES
             ('000001.SZ', '20240506', 10, 11, 9, 10.5, 1000, 2000),
             ('000002.SZ', '20240506', 8, 7, 7.5, 7.8, 900, 1500),
             ('000001.SZ', '20240507', 10.5, 10.8, 10.1, 10.2, 1100, 2100)
             """
         )
-
         con.execute(
             """
-            create table daily_basic (
-                ts_code varchar,
-                trade_date varchar,
-                turnover_rate double,
-                pe double,
-                pb double,
-                total_mv double
+            CREATE TABLE daily_basic (
+                ts_code VARCHAR,
+                trade_date VARCHAR,
+                turnover_rate DOUBLE,
+                pe DOUBLE,
+                pb DOUBLE,
+                total_mv DOUBLE
             )
             """
         )
         con.execute(
             """
-            insert into daily_basic values
+            INSERT INTO daily_basic VALUES
             ('000001.SZ', '20240506', 1.2, 10, 1.5, 100000),
-            ('000001.SZ', '20240507', null, 10.5, 1.6, 101000),
+            ('000001.SZ', '20240507', NULL, 10.5, 1.6, 101000),
             ('000003.SZ', '20240507', 0.9, 9, 1.1, 50000)
             """
         )
-
         con.execute(
             """
-            create table stock_industry_history (
-                ts_code varchar,
-                industry_name varchar,
-                in_date varchar,
-                out_date varchar
+            CREATE TABLE stock_industry_history (
+                ts_code VARCHAR,
+                industry_name VARCHAR,
+                in_date VARCHAR,
+                out_date VARCHAR
             )
             """
         )
         con.execute(
             """
-            insert into stock_industry_history values
-            ('000001.SZ', 'Bank', '20200101', null)
+            INSERT INTO stock_industry_history VALUES
+            ('000001.SZ', 'Bank', '20200101', NULL)
             """
         )
 
@@ -81,10 +77,10 @@ def test_run_quality_checks_writes_markdown_report(tmp_path: Path) -> None:
 
     assert report_path.exists()
     content = report_path.read_text(encoding="utf-8")
-    assert "A-share Data Quality Report" in content
+    assert "A股日频数据底座一期质检报告" in content
     assert "FAIL OHLC 合理性检查" in content
     assert "WARN daily 与 daily_basic 覆盖差异" in content
-    assert "WARN 行业历史归属匹配率" in content
+    assert "WARN 申万历史行业归属匹配率" in content
     assert "`20240506, 20240507`" in content
 
 

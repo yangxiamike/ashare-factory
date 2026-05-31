@@ -36,10 +36,9 @@ def ingest_recent(settings: Settings, days: int = 5) -> IngestResult:
     initialize_warehouse(settings)
     client = TushareClient(settings)
 
-    trade_dates = client.recent_open_dates(days=days)
+    trade_cal, trade_dates = client.recent_trade_calendar(days=days)
     row_counts: dict[str, int] = {}
 
-    trade_cal = client.trade_cal(start_date=trade_dates[0], end_date=trade_dates[-1])
     row_counts["trade_cal"] = _persist(settings, "trade_cal", trade_cal)
     row_counts["stock_basic"] = _persist(settings, "stock_basic", client.stock_basic())
 

@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import duckdb
+import pandas as pd
+
+from ashare_data.config import Settings
+
+
+EXPECTED_COLUMNS: dict[str, list[str]] = {
+    "trade_cal": ["exchange", "cal_date", "is_open", "pretrade_date"],
+    "stock_basic": [
+        "ts_code",
+        "symbol",
+        "name",
+        "area",
+        "industry",
+        "market",
+        "list_date",
+        "act_name",
+        "act_ent_type",
+    ],
+    "daily": [
+        "ts_code",
+        "trade_date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "vol",
+        "amount",
+    ],
+    "adj_factor": ["ts_code", "trade_date", "adj_factor"],
+    "daily_basic": [
+        "ts_code",
+        "trade_date",
+        "close",
+        "turnover_rate",
+        "turnover_rate_f",
+        "volume_ratio",
+        "pe",
+        "pe_ttm",
+        "pb",
+        "ps",
+        "ps_ttm",
+        "dv_ratio",
+        "dv_ttm",
+        "total_share",
+        "float_share",
+        "free_share",
+        "total_mv",
+        "circ_mv",
+    ],
+    "suspend_d": ["ts_code", "trade_date", "suspend_type", "suspend_timing"],
+    "stk_limit": ["ts_code", "trade_date", "up_limit", "down_limit"],
+    "index_classify": ["index_code", "industry_name", "level", "industry_code", "src"],
+    "index_member_all": [
+        "l1_code",
+        "l1_name",
+        "l2_code",
+        "l2_name",
+        "l3_code",
+        "l3_name",
+        "ts_code",
+        "con_code",
+        "con_name",
+        "in_date",
+        "out_date",
+        "is_new",
+    ],
+}
+
+
+def resolved(settings: Settings) -> Settings:
+    return settings.resolve_paths()
+
+
+def connect(settings: Settings) -> duckdb.DuckDBPyConnection:
+    settings = resolved(settings)
+    settings.warehouse_dir.mkdir(parents=True, exist_ok=True)
+    return duckdb.connect(str(settings.duckdb_path))
+
+
+def initialize_warehouse(settings: Settings) -> None:
+    settings = resolved(settings)
+    settings.raw_dir.mkdir(parents=True, exist_ok=True)
+    settings.warehouse_dir.mkdir(parents=True, exist_ok=True)
+    settings.report_dir.mkdir(parents=True, exist_ok=True)
+    with connect(settings) as con:
+        sql_path = settings.sql_dir / "create_tables.sql"
+        con.execute(sql_path.read_text(encoding="utf-8"))
+
+
+def normalize_frame(endpoint: str, frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
+    for column in EXPECTED_COLUMNS.get(endpoint, []):
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    return frame
+
+
+def write_raw(settings: Settings, endpoint: str, frame: pd.DataFrame) -> Path:
+    settings = resolved(settings)
+    endpoint_dir = settings.raw_dir / endpoint
+    endpoint_dir.mkdir(parents=True, exist_ok=True)
+    path = endpoint_dir / f"{endpoint}.parquet"
+    normalize_frame(endpoint, frame).to_parquet(path, index=False)
+    return path
+
+
+def replace_table(settings: Settings, table_name: str, frame: pd.DataFrame) -> int:
+    frame = normalize_frame(table_name, frame)
+    with connect(settings) as con:
+        con.register("_frame", frame)
+        con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM _frame")
+        con.unregister("_frame")
+    return len(frame)
+
+
+def load_raw_table(settings: Settings, endpoint: str) -> int:
+    settings = resolved(settings)
+    path = settings.raw_dir / endpoint / f"{endpoint}.parquet"
+    if not path.exists():
+        raise FileNotFoundError(f"Raw parquet not found for {endpoint}: {path}")
+    frame = pd.read_parquet(path)
+    return replace_table(settings, endpoint, frame)

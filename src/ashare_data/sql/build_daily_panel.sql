@@ -1,35 +1,36 @@
 CREATE OR REPLACE TABLE daily_panel AS
-WITH member_snapshot AS (
+WITH industry_history AS (
     SELECT
-        d.trade_date,
-        d.ts_code,
-        im.index_code,
-        im.con_code,
-        im.in_date,
-        im.out_date,
-        ROW_NUMBER() OVER (
-            PARTITION BY d.trade_date, d.ts_code
-            ORDER BY COALESCE(im.in_date, '') DESC, im.index_code
-        ) AS rn
-    FROM daily AS d
-    LEFT JOIN index_member_all AS im
-        ON d.ts_code = im.con_code
-        AND d.trade_date >= im.in_date
-        AND (im.out_date IS NULL OR d.trade_date < im.out_date)
+        COALESCE(CAST(con_code AS VARCHAR), CAST(ts_code AS VARCHAR)) AS ts_code,
+        CAST(con_name AS VARCHAR) AS con_name,
+        CAST(l1_code AS VARCHAR) AS l1_code,
+        CAST(l1_name AS VARCHAR) AS l1_name,
+        CAST(l2_code AS VARCHAR) AS l2_code,
+        CAST(l2_name AS VARCHAR) AS l2_name,
+        CAST(l3_code AS VARCHAR) AS l3_code,
+        CAST(l3_name AS VARCHAR) AS l3_name,
+        CAST(in_date AS VARCHAR) AS in_date,
+        CAST(out_date AS VARCHAR) AS out_date,
+        CAST(is_new AS VARCHAR) AS is_new
+    FROM index_member_all
 ),
-member_one AS (
+suspend_flags AS (
     SELECT
-        trade_date,
         ts_code,
-        index_code AS industry_index_code,
-        in_date AS industry_in_date,
-        out_date AS industry_out_date
-    FROM member_snapshot
-    WHERE rn = 1
+        trade_date,
+        TRUE AS is_suspended,
+        string_agg(DISTINCT suspend_type, ',') AS suspend_type,
+        string_agg(DISTINCT suspend_timing, ',') AS suspend_timing
+    FROM suspend_d
+    GROUP BY ts_code, trade_date
 )
 SELECT
-    d.ts_code,
     d.trade_date,
+    d.ts_code,
+    sb.name,
+    sb.market,
+    sb.area,
+    sb.industry AS stock_basic_industry,
     d.open,
     d.high,
     d.low,
@@ -57,24 +58,42 @@ SELECT
     db.circ_mv,
     sl.up_limit,
     sl.down_limit,
-    sd.suspend_timing,
-    sd.suspend_type,
-    m.industry_index_code,
-    m.industry_in_date,
-    m.industry_out_date
-FROM daily AS d
-LEFT JOIN adj_factor AS af
-    ON d.ts_code = af.ts_code
-    AND d.trade_date = af.trade_date
-LEFT JOIN daily_basic AS db
-    ON d.ts_code = db.ts_code
-    AND d.trade_date = db.trade_date
-LEFT JOIN stk_limit AS sl
-    ON d.ts_code = sl.ts_code
-    AND d.trade_date = sl.trade_date
-LEFT JOIN suspend_d AS sd
-    ON d.ts_code = sd.ts_code
-    AND d.trade_date = sd.trade_date
-LEFT JOIN member_one AS m
-    ON d.ts_code = m.ts_code
-    AND d.trade_date = m.trade_date;
+    COALESCE(sf.is_suspended, FALSE) AS is_suspended,
+    sf.suspend_type,
+    sf.suspend_timing,
+    ih.con_name AS sw_member_name,
+    ih.l1_code AS sw_l1_code,
+    ih.l1_name AS sw_l1_name,
+    ih.l2_code AS sw_l2_code,
+    ih.l2_name AS sw_l2_name,
+    ih.l3_code AS sw_l3_code,
+    ih.l3_name AS sw_l3_name,
+    ih.in_date AS sw_in_date,
+    ih.out_date AS sw_out_date,
+    ih.is_new AS sw_is_new
+FROM daily d
+LEFT JOIN stock_basic sb
+    ON d.ts_code = sb.ts_code
+LEFT JOIN adj_factor af
+    ON d.trade_date = af.trade_date
+    AND d.ts_code = af.ts_code
+LEFT JOIN daily_basic db
+    ON d.trade_date = db.trade_date
+    AND d.ts_code = db.ts_code
+LEFT JOIN stk_limit sl
+    ON d.trade_date = sl.trade_date
+    AND d.ts_code = sl.ts_code
+LEFT JOIN suspend_flags sf
+    ON d.trade_date = sf.trade_date
+    AND d.ts_code = sf.ts_code
+LEFT JOIN industry_history ih
+    ON d.ts_code = ih.ts_code
+    AND d.trade_date >= ih.in_date
+    AND (ih.out_date IS NULL OR ih.out_date = '' OR d.trade_date < ih.out_date)
+QUALIFY row_number() OVER (
+    PARTITION BY d.trade_date, d.ts_code
+    ORDER BY
+        CASE WHEN ih.is_new = 'Y' THEN 0 ELSE 1 END,
+        ih.in_date DESC NULLS LAST,
+        ih.out_date DESC NULLS LAST
+) = 1;

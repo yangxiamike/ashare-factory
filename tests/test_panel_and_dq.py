@@ -1,10 +1,6 @@
 from pathlib import Path
 
-import pytest
-
-pytest.importorskip("duckdb")
-pytest.importorskip("pydantic_settings")
-pd = pytest.importorskip("pandas")
+import pandas as pd
 
 from ashare_data.config import Settings
 from ashare_data.dq import run_quality_checks
@@ -24,7 +20,7 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
-def test_build_daily_panel_matches_historical_industry(tmp_path):
+def test_build_daily_panel_matches_historical_industry(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     initialize_warehouse(settings)
 
@@ -38,7 +34,7 @@ def test_build_daily_panel_matches_historical_industry(tmp_path):
     replace_table(
         settings,
         "stock_basic",
-        pd.DataFrame([{"ts_code": "000001.SZ", "name": "平安银行", "market": "主板"}]),
+        pd.DataFrame([{"ts_code": "000001.SZ", "name": "Ping An Bank", "market": "Main"}]),
     )
     replace_table(
         settings,
@@ -86,9 +82,9 @@ def test_build_daily_panel_matches_historical_industry(tmp_path):
             [
                 {
                     "con_code": "000001.SZ",
-                    "con_name": "平安银行",
+                    "con_name": "Ping An Bank",
                     "l1_code": "801780.SI",
-                    "l1_name": "银行",
+                    "l1_name": "Bank",
                     "in_date": "20200101",
                     "out_date": "",
                     "is_new": "Y",
@@ -102,5 +98,5 @@ def test_build_daily_panel_matches_historical_industry(tmp_path):
 
     report_path = run_quality_checks(settings, expected_trade_dates=["20260525"])
     report = report_path.read_text(encoding="utf-8")
-    assert "主键重复数量：0" in report
-    assert "申万历史行业归属匹配率：100.00%" in report
+    assert "PASS 主键重复检查" in report
+    assert "申万历史行业归属匹配率: 100.00%" in report

@@ -1,25 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-import duckdb
-
 from ashare_data.config import Settings
-
-
-def _load_sql(sql_path: Path) -> str:
-    return sql_path.read_text(encoding="utf-8")
+from ashare_data.storage import connect
 
 
 def build_daily_panel(settings: Settings) -> int:
-    """Build daily_panel with trade_date + ts_code grain."""
-    sql_path = Path(__file__).parent / "sql" / "build_daily_panel.sql"
-    sql = _load_sql(sql_path)
-
-    with duckdb.connect(str(settings.duckdb_path)) as conn:
-        conn.execute(sql)
-        row = conn.execute("SELECT COUNT(*) FROM daily_panel").fetchone()
-
-    if row is None:
-        return 0
-    return int(row[0])
+    """Build daily_panel and return the row count."""
+    settings = settings.resolve_paths()
+    sql = (settings.sql_dir / "build_daily_panel.sql").read_text(encoding="utf-8")
+    with connect(settings) as con:
+        con.execute(sql)
+        return con.execute("SELECT COUNT(*) FROM daily_panel").fetchone()[0]
