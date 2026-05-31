@@ -74,6 +74,35 @@ EXPECTED_COLUMNS: dict[str, list[str]] = {
     ],
 }
 
+NON_TEXT_COLUMNS: dict[str, set[str]] = {
+    "daily": {"open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"},
+    "adj_factor": {"adj_factor"},
+    "daily_basic": {
+        "close",
+        "turnover_rate",
+        "turnover_rate_f",
+        "volume_ratio",
+        "pe",
+        "pe_ttm",
+        "pb",
+        "ps",
+        "ps_ttm",
+        "dv_ratio",
+        "dv_ttm",
+        "total_share",
+        "float_share",
+        "free_share",
+        "total_mv",
+        "circ_mv",
+    },
+    "stk_limit": {"up_limit", "down_limit"},
+}
+
+TEXT_COLUMNS: dict[str, list[str]] = {
+    endpoint: [column for column in columns if column not in NON_TEXT_COLUMNS.get(endpoint, set())]
+    for endpoint, columns in EXPECTED_COLUMNS.items()
+}
+
 
 def resolved(settings: Settings) -> Settings:
     return settings.resolve_paths()
@@ -105,42 +134,6 @@ def normalize_frame(endpoint: str, frame: pd.DataFrame) -> pd.DataFrame:
         if column in frame.columns:
             frame[column] = frame[column].astype("string")
     return frame
-
-
-TEXT_COLUMNS: dict[str, list[str]] = {
-    "trade_cal": ["exchange", "cal_date", "is_open", "pretrade_date"],
-    "stock_basic": [
-        "ts_code",
-        "symbol",
-        "name",
-        "area",
-        "industry",
-        "market",
-        "list_date",
-        "act_name",
-        "act_ent_type",
-    ],
-    "daily": ["ts_code", "trade_date"],
-    "adj_factor": ["ts_code", "trade_date"],
-    "daily_basic": ["ts_code", "trade_date"],
-    "suspend_d": ["ts_code", "trade_date", "suspend_type", "suspend_timing"],
-    "stk_limit": ["ts_code", "trade_date"],
-    "index_classify": ["index_code", "industry_name", "level", "industry_code", "src"],
-    "index_member_all": [
-        "l1_code",
-        "l1_name",
-        "l2_code",
-        "l2_name",
-        "l3_code",
-        "l3_name",
-        "ts_code",
-        "con_code",
-        "con_name",
-        "in_date",
-        "out_date",
-        "is_new",
-    ],
-}
 
 
 def _migrate_warehouse_schema(con: duckdb.DuckDBPyConnection) -> None:
@@ -230,8 +223,9 @@ def record_ingest_status(
     row_count: int = 0,
     raw_path: str | Path | None = None,
     error_message: str = "",
-    started_at: str | None = None,
-    finished_at: str | None = None,
+    *,
+    started_at: str,
+    finished_at: str,
 ) -> None:
     with connect(settings) as con:
         con.execute(
@@ -246,8 +240,8 @@ def record_ingest_status(
             INSERT INTO ingest_status
             VALUES (
                 ?, ?, ?, ?, ?, ?,
-                CASE WHEN ? IS NULL THEN current_timestamp ELSE CAST(? AS TIMESTAMP) END,
-                CASE WHEN ? IS NULL THEN current_timestamp ELSE CAST(? AS TIMESTAMP) END
+                CAST(? AS TIMESTAMP),
+                CAST(? AS TIMESTAMP)
             )
             """,
             [
@@ -258,8 +252,6 @@ def record_ingest_status(
                 str(raw_path or ""),
                 error_message,
                 started_at,
-                started_at,
-                finished_at,
                 finished_at,
             ],
         )

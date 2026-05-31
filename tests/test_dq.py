@@ -2,7 +2,20 @@ from pathlib import Path
 
 import duckdb
 
-from ashare_data.dq import build_settings_for_path, run_quality_checks
+from ashare_data.config import Settings
+from ashare_data.dq import run_quality_checks
+
+
+def _settings(tmp_path: Path, db_path: Path) -> Settings:
+    return Settings(
+        TUSHARE_TOKEN="test-token",
+        project_root=tmp_path,
+        data_dir=tmp_path / "data",
+        raw_dir=tmp_path / "data" / "raw",
+        warehouse_dir=db_path.parent,
+        report_dir=tmp_path / "reports" / "dq",
+        duckdb_path=db_path,
+    )
 
 
 def _prepare_database(db_path: Path) -> None:
@@ -119,7 +132,7 @@ def test_run_quality_checks_writes_history_report(tmp_path: Path) -> None:
     _prepare_database(db_path)
 
     report_path = run_quality_checks(
-        build_settings_for_path(db_path, tmp_path),
+        _settings(tmp_path, db_path),
         start_date="20240506",
         end_date="20240507",
     )
@@ -140,7 +153,7 @@ def test_history_report_contains_all_required_sections(tmp_path: Path) -> None:
     _prepare_database(db_path)
 
     report_path = run_quality_checks(
-        build_settings_for_path(db_path, tmp_path),
+        _settings(tmp_path, db_path),
         start_date="20240506",
         end_date="20240507",
     )
@@ -165,7 +178,7 @@ def test_date_coverage_flags_missing_expected_trade_date(tmp_path: Path) -> None
     _prepare_database(db_path)
 
     report_path = run_quality_checks(
-        build_settings_for_path(db_path, tmp_path),
+        _settings(tmp_path, db_path),
         expected_trade_dates=["20240506", "20240508"],
     )
 
@@ -179,9 +192,9 @@ def test_report_defaults_to_duckdb_sibling_reports_directory(tmp_path: Path) -> 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     _prepare_database(db_path)
 
-    report_path = run_quality_checks(build_settings_for_path(db_path))
+    report_path = run_quality_checks(_settings(tmp_path, db_path))
 
-    assert report_path.parent == db_path.parent / "reports" / "dq"
+    assert report_path.parent == tmp_path / "reports" / "dq"
 
 
 def test_primary_key_duplicate_check_flags_duplicate_groups(tmp_path: Path) -> None:
@@ -195,7 +208,7 @@ def test_primary_key_duplicate_check_flags_duplicate_groups(tmp_path: Path) -> N
             """
         )
 
-    report_path = run_quality_checks(build_settings_for_path(db_path, tmp_path))
+    report_path = run_quality_checks(_settings(tmp_path, db_path))
     content = report_path.read_text(encoding="utf-8")
 
     assert "FAIL 主键重复检查" in content

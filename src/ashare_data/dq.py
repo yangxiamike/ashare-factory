@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Iterable
 
 import duckdb
+
+from ashare_data.config import Settings
 
 
 PRIMARY_KEY_TABLES = ("daily", "daily_basic", "daily_panel")
@@ -31,23 +32,15 @@ class CheckResult:
     details: list[str]
 
 
-def build_settings_for_path(
-    duckdb_path: str | Path, report_dir: str | Path | None = None
-) -> SimpleNamespace:
-    payload = {"duckdb_path": Path(duckdb_path)}
-    if report_dir is not None:
-        payload["report_dir"] = Path(report_dir)
-    return SimpleNamespace(**payload)
-
-
 def run_quality_checks(
-    settings: object,
+    settings: Settings,
     expected_trade_dates: Iterable[str] | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> Path:
-    duckdb_path = Path(getattr(settings, "duckdb_path"))
-    report_dir = _resolve_report_dir(settings, duckdb_path)
+    settings = settings.resolve_paths()
+    duckdb_path = settings.duckdb_path
+    report_dir = _resolve_report_dir(settings)
     report_dir.mkdir(parents=True, exist_ok=True)
 
     expected_dates = sorted({str(item) for item in (expected_trade_dates or [])})
@@ -78,15 +71,8 @@ def run_quality_checks(
     return report_path
 
 
-def _resolve_report_dir(settings: object, duckdb_path: Path) -> Path:
-    report_dir = getattr(settings, "report_dir", None)
-    if report_dir:
-        path = Path(report_dir)
-        return path if path.name == "dq" else path / "dq"
-    project_root = getattr(settings, "project_root", None)
-    if project_root:
-        return Path(project_root) / "reports" / "dq"
-    return duckdb_path.resolve().parent / "reports" / "dq"
+def _resolve_report_dir(settings: Settings) -> Path:
+    return settings.report_dir
 
 
 def _list_tables(con: duckdb.DuckDBPyConnection) -> list[str]:

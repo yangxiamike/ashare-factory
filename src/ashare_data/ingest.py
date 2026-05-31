@@ -9,7 +9,6 @@ import pandas as pd
 
 from ashare_data.config import Settings
 from ashare_data.storage import (
-    has_raw_daily_partition,
     has_successful_ingest,
     initialize_warehouse,
     record_ingest_status,
@@ -82,17 +81,6 @@ class RateLimiter:
         self.last_call = datetime.now()
 
 
-def _concat_daily(client: TushareClient, method_name: str, trade_dates: list[str]) -> pd.DataFrame:
-    frames = []
-    method = getattr(client, method_name)
-    for trade_date in trade_dates:
-        frame = method(trade_date)
-        frames.append(frame)
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).drop_duplicates(ignore_index=True)
-
-
 def _persist(settings: Settings, endpoint: str, frame: pd.DataFrame) -> int:
     write_raw(settings, endpoint, frame)
     return replace_table(settings, endpoint, frame)
@@ -155,20 +143,32 @@ def ingest_history(
         frame = _call_with_retry(client, endpoint, limiter, retries)
         write_raw(settings, endpoint, frame)
         row_counts[endpoint] = replace_table(settings, endpoint, frame)
-        record_ingest_status(settings, endpoint, "ALL", "success", row_counts[endpoint])
+        finished_at = datetime.now().isoformat(sep=" ", timespec="seconds")
+        record_ingest_status(
+            settings,
+            endpoint,
+            "ALL",
+            "success",
+            row_counts[endpoint],
+            started_at=finished_at,
+            finished_at=finished_at,
+        )
 
     for trade_date in trade_dates:
         for endpoint in DAILY_ENDPOINTS:
             if not force and has_successful_ingest(settings, endpoint, trade_date):
-                if has_raw_daily_partition(settings, endpoint, trade_date):
-                    skipped[endpoint] += 1
-                    continue
+                skipped[endpoint] += 1
+                continue
 
-            started_at: str | None = None
+            started_at = datetime.now().isoformat(sep=" ", timespec="seconds")
             try:
-                started_at = datetime.now().isoformat(sep=" ", timespec="seconds")
                 record_ingest_status(
-                    settings, endpoint, trade_date, "running", started_at=started_at, finished_at=None
+                    settings,
+                    endpoint,
+                    trade_date,
+                    "running",
+                    started_at=started_at,
+                    finished_at=started_at,
                 )
                 frame = _call_with_retry(client, endpoint, limiter, retries, trade_date)
                 raw_path = write_raw_partition(settings, endpoint, trade_date, frame)
