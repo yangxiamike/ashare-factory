@@ -4,6 +4,7 @@
 
 - `codex-tasks/` 是给 Codex 的任务留言区，由夏董负责转告，不需要 Claude / DeepSeek 直接联系 Codex。
 - 每个任务用一个 markdown 文件写清楚，文件名尽量用 `YYYY-MM-DD-简短主题.md`。
+- 新增任务后，在 `codex-tasks/TASK_BOARD.md` 里加一行 `待处理`，方便夏董总览。
 - 任务文件里保留最小结构即可：
   - `状态：待处理`
   - `要改什么`
