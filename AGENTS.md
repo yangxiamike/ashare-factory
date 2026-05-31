@@ -17,6 +17,7 @@
 
 - `codex-tasks/` 是 Claude / DeepSeek 写给夏董看的任务材料区，由夏董转述给 Codex 执行。
 - `codex-tasks/TASK_BOARD.md` 是任务总览；新增或解决任务时，同步更新这一行。
+- 具体任务文件放在 `codex-tasks/tasks/`，文件名使用 `YYYY-MM-DD-简短主题.md`。
 - Codex 完成任务后，只需要在任务板把状态改成 `已解决`，并填上对应 commit。
 - 任务过程中的沟通都直接和夏董完成，不在任务文件里另写回复流程。
 ## 代码结构规范
