@@ -11,7 +11,7 @@ def load_daily_panel(duckdb_path, start_date="20220101"):
     """Load daily_panel from duckdb, return clean DataFrame."""
     con = duckdb.connect(str(duckdb_path), read_only=True)
     sql = """
-    SELECT trade_date, ts_code, close, total_mv, is_suspended, sw_l1_name
+    SELECT trade_date, ts_code, close, adj_factor, total_mv, is_suspended, sw_l1_name
     FROM daily_panel
     WHERE trade_date >= ?
       AND close IS NOT NULL
@@ -22,6 +22,7 @@ def load_daily_panel(duckdb_path, start_date="20220101"):
     con.close()
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df["is_suspended"] = df["is_suspended"].fillna(False).astype(bool)
+    df["adj_close"] = df["close"] * df["adj_factor"]
     df = df[~df["is_suspended"] & (df["total_mv"] > 0)].copy()
     return df.sort_values(["ts_code", "trade_date"]).reset_index(drop=True)
 
@@ -29,9 +30,9 @@ def load_daily_panel(duckdb_path, start_date="20220101"):
 # ── Factor Construction ───────────────────────────────────────
 
 def compute_momentum(df, window=20):
-    """Compute momentum factor: close / close.shift(window) - 1"""
+    """Compute momentum factor: adj_close / adj_close.shift(window) - 1"""
     df = df.copy()
-    df["mom"] = df.groupby("ts_code")["close"].transform(
+    df["mom"] = df.groupby("ts_code")["adj_close"].transform(
         lambda s: s / s.shift(window) - 1
     )
     df = df[df["mom"].notna()].copy()
@@ -42,7 +43,7 @@ def compute_forward_returns(df, horizons=(1, 5, 20)):
     """Compute forward returns for given horizons."""
     df = df.copy()
     for h in horizons:
-        df[f"fwd_{h}d"] = df.groupby("ts_code")["close"].transform(
+        df[f"fwd_{h}d"] = df.groupby("ts_code")["adj_close"].transform(
             lambda s: s.shift(-(h + 1)) / s.shift(-1) - 1
         )
     return df

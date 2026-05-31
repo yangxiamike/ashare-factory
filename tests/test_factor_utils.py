@@ -14,6 +14,7 @@ def test_load_daily_panel_uses_parameterized_start_date(tmp_path: Path) -> None:
                 trade_date VARCHAR,
                 ts_code VARCHAR,
                 close DOUBLE,
+                adj_factor DOUBLE,
                 total_mv DOUBLE,
                 is_suspended BOOLEAN,
                 sw_l1_name VARCHAR
@@ -23,8 +24,8 @@ def test_load_daily_panel_uses_parameterized_start_date(tmp_path: Path) -> None:
         con.execute(
             """
             INSERT INTO daily_panel VALUES
-            ('20220103', '000001.SZ', 10.0, 1000.0, FALSE, 'Bank'),
-            ('20220104', '000002.SZ', 11.0, 2000.0, FALSE, 'Broker')
+            ('20220103', '000001.SZ', 10.0, 1.1, 1000.0, FALSE, 'Bank'),
+            ('20220104', '000002.SZ', 11.0, 0.9, 2000.0, FALSE, 'Broker')
             """
         )
 
@@ -33,3 +34,41 @@ def test_load_daily_panel_uses_parameterized_start_date(tmp_path: Path) -> None:
     assert df.empty
     with duckdb.connect(str(db_path), read_only=True) as con:
         assert con.execute("SELECT COUNT(*) FROM daily_panel").fetchone()[0] == 2
+
+
+def test_load_daily_panel_adds_adj_close(tmp_path: Path) -> None:
+    db_path = tmp_path / "panel.duckdb"
+    with duckdb.connect(str(db_path)) as con:
+        con.execute(
+            """
+            CREATE TABLE daily_panel (
+                trade_date VARCHAR,
+                ts_code VARCHAR,
+                close DOUBLE,
+                adj_factor DOUBLE,
+                total_mv DOUBLE,
+                is_suspended BOOLEAN,
+                sw_l1_name VARCHAR
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO daily_panel VALUES
+            ('20220103', '000001.SZ', 10.0, 1.2, 1000.0, FALSE, 'Bank')
+            """
+        )
+
+    df = load_daily_panel(db_path, "20220101")
+
+    assert list(df.columns) == [
+        "trade_date",
+        "ts_code",
+        "close",
+        "adj_factor",
+        "total_mv",
+        "is_suspended",
+        "sw_l1_name",
+        "adj_close",
+    ]
+    assert df.loc[0, "adj_close"] == 12.0
