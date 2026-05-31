@@ -4,7 +4,7 @@ import duckdb
 import pandas as pd
 
 from ashare_data.config import Settings
-from ashare_data.ingest import ingest_history, ingest_index_weight, ingest_recent
+from ashare_data.ingest import _fetch_index_weight_history, ingest_history, ingest_index_weight, ingest_recent
 
 
 class FakeTushareClient:
@@ -275,3 +275,58 @@ def test_ingest_index_weight_is_idempotent_and_keeps_multiple_indexes(tmp_path: 
         / "trade_date=20260525"
         / "index_weight.parquet"
     ).exists()
+
+
+def test_fetch_index_weight_history_splits_by_month_and_combines_rows(tmp_path: Path, monkeypatch) -> None:
+    import ashare_data.ingest as ingest_module
+
+    class ChunkedFakeTushareClient(FakeTushareClient):
+        def index_weight(self, index_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+            self._count(f"index_weight:{index_code}:{start_date}:{end_date}")
+            payload = {
+                ("20260530", "20260531"): [
+                    {
+                        "index_code": index_code,
+                        "con_code": "000001.SZ",
+                        "trade_date": "20260530",
+                        "weight": 3.0,
+                    }
+                ],
+                ("20260601", "20260602"): [
+                    {
+                        "index_code": index_code,
+                        "con_code": "000001.SZ",
+                        "trade_date": "20260602",
+                        "weight": 3.1,
+                    }
+                ],
+            }
+            return pd.DataFrame(payload.get((start_date, end_date), []))
+
+    ChunkedFakeTushareClient.reset()
+    monkeypatch.setattr(ingest_module, "TushareClient", ChunkedFakeTushareClient)
+    client = ChunkedFakeTushareClient(_settings(tmp_path))
+
+    frame = _fetch_index_weight_history(
+        client,
+        index_code="000300.SH",
+        start_date="20260530",
+        end_date="20260602",
+    )
+
+    assert frame.to_dict(orient="records") == [
+        {
+            "index_code": "000300.SH",
+            "con_code": "000001.SZ",
+            "trade_date": "20260530",
+            "weight": 3.0,
+        },
+        {
+            "index_code": "000300.SH",
+            "con_code": "000001.SZ",
+            "trade_date": "20260602",
+            "weight": 3.1,
+        },
+    ]
+    assert ChunkedFakeTushareClient.calls["index_weight:000300.SH:20260530:20260531"] == 1
+    assert ChunkedFakeTushareClient.calls["index_weight:000300.SH:20260601:20260602"] == 1

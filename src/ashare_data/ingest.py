@@ -233,7 +233,12 @@ def ingest_index_weight(
     for index_code in selected_index_codes:
         started_at = datetime.now().isoformat(sep=" ", timespec="seconds")
         try:
-            frame = client.index_weight(index_code=index_code, start_date=start_date, end_date=end_date)
+            frame = _fetch_index_weight_history(
+                client,
+                index_code=index_code,
+                start_date=start_date,
+                end_date=end_date,
+            )
         except Exception as exc:
             failed += 1
             record_ingest_status(
@@ -453,6 +458,23 @@ def _persist_recent_daily_endpoint(
         write_raw_partition(settings, endpoint, trade_date, frame)
         rows += upsert_trade_date_table(settings, endpoint, trade_date, frame)
     return rows
+
+
+def _fetch_index_weight_history(
+    client: TushareClient,
+    index_code: str,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for chunk_start, chunk_end in _month_chunks(start_date, end_date):
+        frame = client.index_weight(index_code=index_code, start_date=chunk_start, end_date=chunk_end)
+        if frame.empty:
+            continue
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame(columns=["index_code", "con_code", "trade_date", "weight"])
+    return pd.concat(frames, ignore_index=True).drop_duplicates(ignore_index=True)
 
 
 def _index_weight_status_endpoint(index_code: str) -> str:
