@@ -14,6 +14,7 @@ from ashare_data.storage import (
     initialize_warehouse,
     record_ingest_status,
     replace_table,
+    upsert_trade_cal_table,
     upsert_trade_date_table,
     write_raw,
     write_raw_partition,
@@ -143,7 +144,7 @@ def ingest_history(
         .sort_values()
         .tolist()
     )
-    replace_table(settings, "trade_cal", trade_cal)
+    upsert_trade_cal_table(settings, trade_cal)
 
     row_counts: dict[str, int] = {"trade_cal": len(trade_cal)}
     skipped: dict[str, int] = {}

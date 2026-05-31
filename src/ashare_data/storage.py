@@ -196,6 +196,18 @@ def replace_table(settings: Settings, table_name: str, frame: pd.DataFrame) -> i
     return len(frame)
 
 
+def upsert_trade_cal_table(settings: Settings, frame: pd.DataFrame) -> int:
+    frame = normalize_frame("trade_cal", frame)
+    if frame.empty:
+        return 0
+    with connect(settings) as con:
+        con.register("_frame", frame)
+        con.execute("DELETE FROM trade_cal WHERE cal_date IN (SELECT cal_date FROM _frame)")
+        con.execute("INSERT INTO trade_cal SELECT * FROM _frame")
+        con.unregister("_frame")
+    return len(frame)
+
+
 def upsert_trade_date_table(
     settings: Settings, table_name: str, trade_date: str, frame: pd.DataFrame
 ) -> int:
