@@ -4,7 +4,7 @@
 
 ## 任务列表
 
-| 状态 | 任务 | 任务文件 | 解决 commit | 备注 |
+| 状态 | 任务 | 任务文件 | 解决 commit | Codex 最终口径 |
 | --- | --- | --- | --- | --- |
 | 待处理 | Tushare -> DuckDB 管线 code review | [tasks/2026-05-31-code-review-issues.md](tasks/2026-05-31-code-review-issues.md) |  |  |
 | 待处理 | 删除防御性冗余和死代码 | [tasks/2026-05-31-redundancy-fix.md](tasks/2026-05-31-redundancy-fix.md) |  |  |
@@ -16,4 +16,5 @@
 - `TASK_BOARD.md` 放在 `codex-tasks/` 顶层，具体任务文件放在 `codex-tasks/tasks/`。
 - 新增任务时，在这里加一行 `待处理`。
 - 任务文件名使用 `YYYY-MM-DD-简短主题.md`。
-- Codex 解决后，把状态改成 `已解决`，填上 commit。
+- Codex 解决后，把状态改成 `已解决`，填上 commit，并用一句话记录 Codex 最终采用的修改口径。
+- 如果最终方案和任务文件里的建议不同，在对应任务文件末尾补 `Codex 最终方案`，写清楚差异和原因；如果一致，写 `与原建议一致` 即可。
