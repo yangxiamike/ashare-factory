@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Push"
+  short_description: "Stage, commit, and push local Git changes safely."
+  default_prompt: "Use $git-push to stage, commit, and push this project to its configured remote."
