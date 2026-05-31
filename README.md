@@ -1,59 +1,74 @@
 # A-share Data Foundation
 
-这是一个 A 股日频数据底座项目。
+本项目是 A 股日频数据底座，当前支持两类流程：
 
-当前已补齐的数据质检模块，目标是把 `daily`、`daily_basic`、`daily_panel` 这几张核心表的基础质量问题先暴露出来，并把结果写成 Markdown 报告，方便人工扫读。
+- 一期验证：最近若干交易日闭环采集、入库、构建 `daily_panel`、输出 DQ 报告。
+- 历史补数：按日期范围分批采集，支持断点续跑、分区 raw、幂等入库和范围质检。
 
-## 当前能力
+## 快速开始
 
-- 初始化、拉取、组装面板的 CLI 骨架已经预留在 `src/ashare_data/cli.py`
-- 数据质检入口已经可接入：`ashare-data dq`
-- 质检报告会输出到 `reports/dq/`
+```powershell
+python -m pip install -e ".[dev]"
+Copy-Item .env.example .env
+```
+
+在 `.env` 中设置：
+
+```env
+TUSHARE_TOKEN=your_tushare_pro_token
+```
+
+## 一期验证
+
+```powershell
+python -m ashare_data.cli validate --days 5
+```
+
+## 历史补数
+
+按日期范围采集：
+
+```powershell
+python -m ashare_data.cli ingest-history --start-date 20260501 --end-date 20260531
+```
+
+按滚动年份采集：
+
+```powershell
+python -m ashare_data.cli ingest-history --years 10
+```
+
+默认限速为 `180` 次/分钟。默认跳过 `ingest_status` 已成功且 raw 分区存在的数据；如需重拉：
+
+```powershell
+python -m ashare_data.cli ingest-history --start-date 20260501 --end-date 20260531 --force
+```
+
+范围构建 panel：
+
+```powershell
+python -m ashare_data.cli build-panel --start-date 20260501 --end-date 20260531
+```
+
+范围质检：
+
+```powershell
+python -m ashare_data.cli dq --start-date 20260501 --end-date 20260531
+```
+
+## 数据产物
+
+- 分区 raw：`data/raw/<endpoint>/trade_date=YYYYMMDD/<endpoint>.parquet`
+- 静态 raw：`data/raw/<endpoint>/<endpoint>.parquet`
+- DuckDB：`data/warehouse/ashare.duckdb`
+- 历史 DQ：`reports/dq/history_dq_<start>_<end>_<timestamp>.md`
 
 ## 质检内容
 
-- 主键重复：默认检查 `ts_code + trade_date`
-- 日期覆盖：汇总最小日期、最大日期、交易日数量，并可校验预期交易日
-- 关键字段缺失率：检查 `daily`、`daily_basic`、`daily_panel` 中存在的关键字段
-- OHLC 合理性：检查 `high >= open/close/low`、`low <= open/close`，并识别空值
-- `daily` 与 `daily_basic` 覆盖差异：找出只存在于单边的主键记录
-- 行业历史归属匹配率：按 `in_date/out_date` 区间检查日频记录能否匹配行业历史
-
-## 使用方式
-
-1. 安装依赖
-
-```bash
-pip install -e .[dev]
-```
-
-2. 准备环境变量
-
-参考 `.env.example`，至少补齐 Tushare token 和本地数据目录。
-
-3. 运行质检
-
-```bash
-ashare-data dq
-```
-
-如果主流程里已经知道本次应该覆盖哪些交易日，也可以在代码里调用：
-
-```python
-from ashare_data.dq import run_quality_checks
-
-report_path = run_quality_checks(settings, expected_trade_dates=["20240527", "20240528"])
-print(report_path)
-```
-
-## 测试
-
-```bash
-pytest
-```
-
-## 集成说明
-
-- 当前 `dq.py` 只依赖 `settings.duckdb_path`
-- 如果主工程后续提供 `settings.report_dir`、`settings.reports_dir` 或 `settings.project_root`，报告目录会自动跟随
-- 行业历史表默认优先识别 `index_member_all`，其次识别 `stock_industry_history`
+- 历史采集状态。
+- 主键重复：`trade_date + ts_code`。
+- 日期覆盖与缺口。
+- 关键字段缺失率。
+- OHLC 合理性。
+- `daily` 与 `daily_basic` 覆盖差异。
+- 申万历史行业归属匹配率。

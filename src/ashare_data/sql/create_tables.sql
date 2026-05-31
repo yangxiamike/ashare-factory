@@ -92,3 +92,14 @@ CREATE TABLE IF NOT EXISTS index_member_all (
 );
 
 CREATE TABLE IF NOT EXISTS daily_panel AS SELECT * FROM daily WHERE 1 = 0;
+
+CREATE TABLE IF NOT EXISTS ingest_status (
+    endpoint VARCHAR,
+    trade_date VARCHAR,
+    status VARCHAR,
+    row_count BIGINT,
+    raw_path VARCHAR,
+    error_message VARCHAR,
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP
+);

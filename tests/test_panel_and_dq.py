@@ -23,14 +23,7 @@ def _settings(tmp_path: Path) -> Settings:
 def test_build_daily_panel_matches_historical_industry(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     initialize_warehouse(settings)
-
-    replace_table(
-        settings,
-        "trade_cal",
-        pd.DataFrame(
-            [{"exchange": "SSE", "cal_date": "20260525", "is_open": "1", "pretrade_date": None}]
-        ),
-    )
+    replace_table(settings, "trade_cal", pd.DataFrame())
     replace_table(
         settings,
         "stock_basic",
@@ -81,7 +74,7 @@ def test_build_daily_panel_matches_historical_industry(tmp_path: Path) -> None:
         pd.DataFrame(
             [
                 {
-                    "con_code": "000001.SZ",
+                    "ts_code": "000001.SZ",
                     "con_name": "Ping An Bank",
                     "l1_code": "801780.SI",
                     "l1_name": "Bank",
@@ -93,9 +86,7 @@ def test_build_daily_panel_matches_historical_industry(tmp_path: Path) -> None:
         ),
     )
 
-    rows = build_daily_panel(settings)
-    assert rows == 1
-
+    assert build_daily_panel(settings) == 1
     report_path = run_quality_checks(settings, expected_trade_dates=["20260525"])
     report = report_path.read_text(encoding="utf-8")
     assert "PASS 主键重复检查" in report

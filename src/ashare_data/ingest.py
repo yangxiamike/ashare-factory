@@ -1,18 +1,57 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from time import sleep
 
 import pandas as pd
 
 from ashare_data.config import Settings
-from ashare_data.storage import initialize_warehouse, replace_table, write_raw
+from ashare_data.storage import (
+    has_raw_daily_partition,
+    has_successful_ingest,
+    initialize_warehouse,
+    record_ingest_status,
+    replace_table,
+    upsert_trade_date_table,
+    write_raw,
+    write_raw_partition,
+)
 from ashare_data.tushare_client import TushareClient
+
+
+DAILY_ENDPOINTS = ["daily", "adj_factor", "daily_basic", "suspend_d", "stk_limit"]
+STATIC_ENDPOINTS = ["stock_basic", "index_classify", "index_member_all"]
 
 
 @dataclass(frozen=True)
 class IngestResult:
     trade_dates: list[str]
     row_counts: dict[str, int]
+
+
+@dataclass(frozen=True)
+class HistoryIngestResult:
+    trade_dates: list[str]
+    row_counts: dict[str, int]
+    skipped: dict[str, int]
+    failed: dict[str, int]
+
+
+class RateLimiter:
+    def __init__(self, calls_per_minute: int) -> None:
+        self.interval = 60 / calls_per_minute if calls_per_minute > 0 else 0
+        self.last_call: datetime | None = None
+
+    def wait(self) -> None:
+        if self.interval <= 0:
+            return
+        now = datetime.now()
+        if self.last_call is not None:
+            elapsed = (now - self.last_call).total_seconds()
+            if elapsed < self.interval:
+                sleep(self.interval - elapsed)
+        self.last_call = datetime.now()
 
 
 def _concat_daily(client: TushareClient, method_name: str, trade_dates: list[str]) -> pd.DataFrame:
@@ -49,3 +88,127 @@ def ingest_recent(settings: Settings, days: int = 5) -> IngestResult:
     row_counts["index_member_all"] = _persist(settings, "index_member_all", client.index_member_all())
 
     return IngestResult(trade_dates=trade_dates, row_counts=row_counts)
+
+
+def ingest_history(
+    settings: Settings,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    years: int | None = None,
+    rate_limit_per_minute: int = 180,
+    force: bool = False,
+    retries: int = 2,
+) -> HistoryIngestResult:
+    settings = settings.resolve_paths()
+    initialize_warehouse(settings)
+    client = TushareClient(settings)
+
+    start_date, end_date = _resolve_date_range(start_date, end_date, years)
+    limiter = RateLimiter(rate_limit_per_minute)
+
+    limiter.wait()
+    trade_cal = client.trade_cal(start_date=start_date, end_date=end_date)
+    if trade_cal.empty:
+        raise RuntimeError(f"Tushare trade_cal returned no rows for {start_date} to {end_date}.")
+    trade_dates = (
+        trade_cal.loc[trade_cal["is_open"].astype(str) == "1", "cal_date"]
+        .astype(str)
+        .sort_values()
+        .tolist()
+    )
+    replace_table(settings, "trade_cal", trade_cal)
+
+    row_counts: dict[str, int] = {"trade_cal": len(trade_cal)}
+    skipped: dict[str, int] = {}
+    failed: dict[str, int] = {}
+
+    for endpoint in STATIC_ENDPOINTS:
+        frame = _call_with_retry(client, endpoint, limiter, retries)
+        write_raw(settings, endpoint, frame)
+        row_counts[endpoint] = replace_table(settings, endpoint, frame)
+        record_ingest_status(settings, endpoint, "ALL", "success", row_counts[endpoint])
+
+    for trade_date in trade_dates:
+        for endpoint in DAILY_ENDPOINTS:
+            if not force and has_successful_ingest(settings, endpoint, trade_date):
+                if has_raw_daily_partition(settings, endpoint, trade_date):
+                    skipped[endpoint] = skipped.get(endpoint, 0) + 1
+                    continue
+
+            started_at: str | None = None
+            try:
+                started_at = datetime.now().isoformat(sep=" ", timespec="seconds")
+                record_ingest_status(
+                    settings, endpoint, trade_date, "running", started_at=started_at, finished_at=None
+                )
+                frame = _call_with_retry(client, endpoint, limiter, retries, trade_date)
+                raw_path = write_raw_partition(settings, endpoint, trade_date, frame)
+                row_counts[endpoint] = row_counts.get(endpoint, 0) + upsert_trade_date_table(
+                    settings, endpoint, trade_date, frame
+                )
+                record_ingest_status(
+                    settings,
+                    endpoint,
+                    trade_date,
+                    "success",
+                    len(frame),
+                    raw_path,
+                    started_at=started_at,
+                    finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
+                )
+            except Exception as exc:
+                failed[endpoint] = failed.get(endpoint, 0) + 1
+                record_ingest_status(
+                    settings,
+                    endpoint,
+                    trade_date,
+                    "failed",
+                    error_message=str(exc),
+                    started_at=started_at,
+                    finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
+                )
+
+    return HistoryIngestResult(
+        trade_dates=trade_dates, row_counts=row_counts, skipped=skipped, failed=failed
+    )
+
+
+def _resolve_date_range(
+    start_date: str | None, end_date: str | None, years: int | None
+) -> tuple[str, str]:
+    if end_date is None:
+        end_date = date.today().strftime("%Y%m%d")
+    if start_date is None:
+        if years is None:
+            raise ValueError("Either --start-date or --years must be provided for ingest-history.")
+        end = datetime.strptime(end_date, "%Y%m%d").date()
+        try:
+            start = end.replace(year=end.year - years)
+        except ValueError:
+            start = end - timedelta(days=365 * years)
+        start_date = start.strftime("%Y%m%d")
+    if start_date > end_date:
+        raise ValueError("start_date must be <= end_date.")
+    return start_date, end_date
+
+
+def _call_with_retry(
+    client: TushareClient,
+    endpoint: str,
+    limiter: RateLimiter,
+    retries: int,
+    trade_date: str | None = None,
+) -> pd.DataFrame:
+    method = getattr(client, endpoint)
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            limiter.wait()
+            if trade_date is None:
+                return method()
+            return method(trade_date)
+        except Exception as exc:
+            last_error = exc
+            if attempt < retries:
+                sleep(2**attempt)
+    raise RuntimeError(f"{endpoint} failed for {trade_date or 'ALL'}: {last_error}")

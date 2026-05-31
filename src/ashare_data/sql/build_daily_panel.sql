@@ -1,4 +1,3 @@
-CREATE OR REPLACE TABLE daily_panel AS
 WITH industry_history AS (
     SELECT
         COALESCE(CAST(con_code AS VARCHAR), CAST(ts_code AS VARCHAR)) AS ts_code,
@@ -90,10 +89,12 @@ LEFT JOIN industry_history ih
     ON d.ts_code = ih.ts_code
     AND d.trade_date >= ih.in_date
     AND (ih.out_date IS NULL OR ih.out_date = '' OR d.trade_date < ih.out_date)
+WHERE ({start_date} IS NULL OR d.trade_date >= {start_date})
+  AND ({end_date} IS NULL OR d.trade_date <= {end_date})
 QUALIFY row_number() OVER (
     PARTITION BY d.trade_date, d.ts_code
     ORDER BY
         CASE WHEN ih.is_new = 'Y' THEN 0 ELSE 1 END,
         ih.in_date DESC NULLS LAST,
         ih.out_date DESC NULLS LAST
-) = 1;
+) = 1

@@ -112,6 +112,22 @@ def write_raw(settings: Settings, endpoint: str, frame: pd.DataFrame) -> Path:
     return path
 
 
+def raw_partition_path(settings: Settings, endpoint: str, trade_date: str) -> Path:
+    settings = resolved(settings)
+    return settings.raw_dir / endpoint / f"trade_date={trade_date}" / f"{endpoint}.parquet"
+
+
+def write_raw_partition(settings: Settings, endpoint: str, trade_date: str, frame: pd.DataFrame) -> Path:
+    path = raw_partition_path(settings, endpoint, trade_date)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalize_frame(endpoint, frame).to_parquet(path, index=False)
+    return path
+
+
+def has_raw_daily_partition(settings: Settings, endpoint: str, trade_date: str) -> bool:
+    return raw_partition_path(settings, endpoint, trade_date).exists()
+
+
 def replace_table(settings: Settings, table_name: str, frame: pd.DataFrame) -> int:
     frame = normalize_frame(table_name, frame)
     with connect(settings) as con:
@@ -119,6 +135,76 @@ def replace_table(settings: Settings, table_name: str, frame: pd.DataFrame) -> i
         con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM _frame")
         con.unregister("_frame")
     return len(frame)
+
+
+def upsert_trade_date_table(
+    settings: Settings, table_name: str, trade_date: str, frame: pd.DataFrame
+) -> int:
+    frame = normalize_frame(table_name, frame)
+    with connect(settings) as con:
+        con.execute(f"DELETE FROM {table_name} WHERE trade_date = ?", [trade_date])
+        if frame.empty:
+            return 0
+        con.register("_frame", frame)
+        con.execute(f"INSERT INTO {table_name} SELECT * FROM _frame")
+        con.unregister("_frame")
+    return len(frame)
+
+
+def record_ingest_status(
+    settings: Settings,
+    endpoint: str,
+    trade_date: str,
+    status: str,
+    row_count: int = 0,
+    raw_path: str | Path | None = None,
+    error_message: str = "",
+    started_at: str | None = None,
+    finished_at: str | None = None,
+) -> None:
+    with connect(settings) as con:
+        con.execute(
+            """
+            DELETE FROM ingest_status
+            WHERE endpoint = ? AND trade_date = ?
+            """,
+            [endpoint, trade_date],
+        )
+        con.execute(
+            """
+            INSERT INTO ingest_status
+            VALUES (
+                ?, ?, ?, ?, ?, ?,
+                CASE WHEN ? IS NULL THEN current_timestamp ELSE CAST(? AS TIMESTAMP) END,
+                CASE WHEN ? IS NULL THEN current_timestamp ELSE CAST(? AS TIMESTAMP) END
+            )
+            """,
+            [
+                endpoint,
+                trade_date,
+                status,
+                row_count,
+                str(raw_path or ""),
+                error_message,
+                started_at,
+                started_at,
+                finished_at,
+                finished_at,
+            ],
+        )
+
+
+def has_successful_ingest(settings: Settings, endpoint: str, trade_date: str) -> bool:
+    with connect(settings) as con:
+        row = con.execute(
+            """
+            SELECT raw_path
+            FROM ingest_status
+            WHERE endpoint = ? AND trade_date = ? AND status = 'success'
+            """,
+            [endpoint, trade_date],
+        ).fetchone()
+    return bool(row and row[0] and Path(row[0]).exists())
 
 
 def load_raw_table(settings: Settings, endpoint: str) -> int:

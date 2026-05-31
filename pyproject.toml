@@ -1,7 +1,7 @@
 [project]
 name = "ashare-data-foundation"
-version = "0.1.0"
-description = "Phase 1 local A-share daily data foundation with Tushare, Parquet, and DuckDB."
+version = "0.2.0"
+description = "Local A-share daily data foundation with Tushare, Parquet, DuckDB, and historical ingest."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -33,7 +33,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100

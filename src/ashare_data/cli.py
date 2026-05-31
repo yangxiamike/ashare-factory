@@ -4,7 +4,7 @@ import typer
 
 from ashare_data.config import Settings
 from ashare_data.dq import run_quality_checks
-from ashare_data.ingest import ingest_recent
+from ashare_data.ingest import ingest_history, ingest_recent
 from ashare_data.panel import build_daily_panel
 from ashare_data.storage import initialize_warehouse
 
@@ -44,23 +44,59 @@ def ingest(days: int = typer.Option(5, help="Number of recent open trading days 
         _fail(exc)
 
 
+@app.command("ingest-history")
+def ingest_history_cmd(
+    start_date: str | None = typer.Option(None, "--start-date", help="Start date (YYYYMMDD)."),
+    end_date: str | None = typer.Option(None, "--end-date", help="End date (YYYYMMDD)."),
+    years: int | None = typer.Option(None, "--years", help="Rolling years when start-date is not provided."),
+    force: bool = typer.Option(False, "--force", help="Re-fetch partitions even when already successful."),
+    rate_limit_per_minute: int = typer.Option(180, "--rate-limit-per-minute", help="API calls per minute."),
+    retries: int = typer.Option(2, "--retries", help="Retry attempts per request."),
+) -> None:
+    """Historical ingest with resume/skip and partitioned raw output."""
+    try:
+        settings = _settings()
+        result = ingest_history(
+            settings,
+            start_date=start_date,
+            end_date=end_date,
+            years=years,
+            force=force,
+            rate_limit_per_minute=rate_limit_per_minute,
+            retries=retries,
+        )
+        typer.echo(f"Ingested trade dates: {len(result.trade_dates)}")
+        typer.echo(f"Raw data root: {settings.raw_dir}")
+        typer.echo(f"Warehouse: {settings.duckdb_path}")
+    except Exception as exc:
+        _fail(exc)
+
+
 @app.command("build-panel")
-def build_panel() -> None:
+def build_panel(
+    start_date: str | None = typer.Option(None, "--start-date", help="Start date (YYYYMMDD)."),
+    end_date: str | None = typer.Option(None, "--end-date", help="End date (YYYYMMDD)."),
+) -> None:
     """Build the daily_panel table from normalized raw tables."""
     try:
         settings = _settings()
-        rows = build_daily_panel(settings)
+        initialize_warehouse(settings)
+        rows = build_daily_panel(settings, start_date=start_date, end_date=end_date)
         typer.echo(f"Built daily_panel rows: {rows}")
     except Exception as exc:
         _fail(exc)
 
 
 @app.command()
-def dq() -> None:
+def dq(
+    start_date: str | None = typer.Option(None, "--start-date", help="Inclusive start trade date, format YYYYMMDD."),
+    end_date: str | None = typer.Option(None, "--end-date", help="Inclusive end trade date, format YYYYMMDD."),
+) -> None:
     """Run data quality checks and write a Markdown report."""
     try:
         settings = _settings()
-        report_path = run_quality_checks(settings)
+        initialize_warehouse(settings)
+        report_path = run_quality_checks(settings, start_date=start_date, end_date=end_date)
         typer.echo(f"Wrote DQ report: {report_path}")
     except Exception as exc:
         _fail(exc)
