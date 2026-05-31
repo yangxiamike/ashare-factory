@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "matplotlib>=3.8.0",
     "pytest>=8.0.0",
     "ruff>=0.6.0",
 ]
