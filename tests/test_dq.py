@@ -135,6 +135,31 @@ def test_run_quality_checks_writes_history_report(tmp_path: Path) -> None:
     assert "预期交易日数量: `2`" in content
 
 
+def test_history_report_contains_all_required_sections(tmp_path: Path) -> None:
+    db_path = tmp_path / "warehouse.duckdb"
+    _prepare_database(db_path)
+
+    report_path = run_quality_checks(
+        build_settings_for_path(db_path, tmp_path),
+        start_date="20240506",
+        end_date="20240507",
+    )
+
+    content = report_path.read_text(encoding="utf-8")
+    required_sections = [
+        "历史采集状态",
+        "日期覆盖检查",
+        "主键重复检查",
+        "关键字段缺失率",
+        "OHLC 合理性检查",
+        "daily 与 daily_basic 覆盖差异",
+        "申万历史行业归属匹配率",
+    ]
+
+    for section in required_sections:
+        assert section in content
+
+
 def test_date_coverage_flags_missing_expected_trade_date(tmp_path: Path) -> None:
     db_path = tmp_path / "warehouse.duckdb"
     _prepare_database(db_path)

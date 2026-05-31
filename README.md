@@ -72,3 +72,5 @@ python -m ashare_data.cli dq --start-date 20260501 --end-date 20260531
 - OHLC 合理性。
 - `daily` 与 `daily_basic` 覆盖差异。
 - 申万历史行业归属匹配率。
+
+历史 `history_dq` 报告验收时，至少应能看到以上 7 项检查章节标题。
