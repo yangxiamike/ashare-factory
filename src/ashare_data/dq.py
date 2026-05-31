@@ -10,7 +10,16 @@ import duckdb
 
 
 PRIMARY_KEY_TABLES = ("daily", "daily_basic", "daily_panel")
-KEY_MISSING_FIELDS = ("open", "high", "low", "close", "amount", "adj_factor", "turnover_rate", "total_mv")
+KEY_MISSING_FIELDS = (
+    "open",
+    "high",
+    "low",
+    "close",
+    "amount",
+    "adj_factor",
+    "turnover_rate",
+    "total_mv",
+)
 
 
 @dataclass(frozen=True)
@@ -160,7 +169,7 @@ def _check_date_coverage(
             }
             missing = [item for item in expected_dates if item not in existing]
             if missing:
-                missing_by_table.append(f"`{table}` missing {','.join(missing)}")
+                missing_by_table.append(f"`{table}` missing {', '.join(missing)}")
 
     if missing_by_table:
         return CheckResult("日期覆盖检查", "FAIL", "; ".join(missing_by_table), details)
@@ -170,25 +179,39 @@ def _check_date_coverage(
 
 
 def _check_missing_rates(con: duckdb.DuckDBPyConnection, tables: list[str]) -> CheckResult:
-    table = "daily_panel" if "daily_panel" in tables else _first_existing(("daily",), tables)
-    if table is None:
+    target_tables = [
+        table_name
+        for table_name in ("daily_panel", "daily", "daily_basic")
+        if table_name in tables
+    ]
+    if not target_tables:
         return CheckResult("关键字段缺失率", "WARN", "未找到可检查字段缺失率的表。", [])
-
-    columns = _columns(con, table)
-    fields = [field for field in KEY_MISSING_FIELDS if field in columns]
-    total = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-    if total == 0:
-        return CheckResult("关键字段缺失率", "WARN", f"`{table}` 为空表。", [])
 
     details: list[str] = []
     alerts: list[str] = []
-    for field in fields:
-        missing = con.execute(f"SELECT COUNT(*) FROM {table} WHERE {field} IS NULL").fetchone()[0]
-        rate = missing / total
-        details.append(f"- `{table}.{field}`: missing `{missing}/{total}`, rate `{rate:.2%}`")
-        if rate > 0.05:
-            alerts.append(f"`{field}`={rate:.2%}")
+    checked_any = False
 
+    for table in target_tables:
+        columns = _columns(con, table)
+        fields = [field for field in KEY_MISSING_FIELDS if field in columns]
+        if not fields:
+            continue
+
+        total = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        if total == 0:
+            details.append(f"- `{table}`: empty table, skipped")
+            continue
+
+        checked_any = True
+        for field in fields:
+            missing = con.execute(f"SELECT COUNT(*) FROM {table} WHERE {field} IS NULL").fetchone()[0]
+            rate = missing / total
+            details.append(f"- `{table}.{field}`: missing `{missing}/{total}`, rate `{rate:.2%}`")
+            if rate > 0.05:
+                alerts.append(f"`{table}.{field}`={rate:.2%}")
+
+    if not checked_any:
+        return CheckResult("关键字段缺失率", "WARN", "目标表存在，但缺少可检查的关键字段。", details)
     if alerts:
         return CheckResult("关键字段缺失率", "WARN", f"超过 5% 的字段: {', '.join(alerts)}", details)
     return CheckResult("关键字段缺失率", "PASS", "关键字段缺失率在阈值内。", details)
@@ -280,7 +303,7 @@ def _check_industry_match(con: duckdb.DuckDBPyConnection, tables: list[str]) -> 
         return CheckResult("申万历史行业归属匹配率", "WARN", "缺少可计算行业匹配率的表或字段。", [])
 
     status = "PASS" if rate >= 0.95 else "WARN"
-    summary = f"申万历史行业归属匹配率: {rate:.2%}"
+    summary = f"申万历史行业归属匹配率 {rate:.2%}"
     return CheckResult("申万历史行业归属匹配率", status, summary, details)
 
 
@@ -301,7 +324,7 @@ def _render_report(
         f"- 已发现表: {', '.join(f'`{table}`' for table in tables) if tables else '无'}",
         f"- 预期交易日: `{', '.join(expected_dates)}`" if expected_dates else "- 预期交易日: 未指定",
         "",
-        "## 📌 总览",
+        "## 总览",
         "",
         f"- PASS: `{counts['PASS']}`",
         f"- WARN: `{counts['WARN']}`",
@@ -314,10 +337,10 @@ def _render_report(
     lines.extend(
         [
             "",
-            "## ⚠️ 说明",
+            "## 说明",
             "",
             "- 主键默认按 `trade_date + ts_code` 检查。",
-            "- daily_panel 的行业归属应来自 `index_member_all` 的历史区间匹配结果。",
+            "- `daily_panel` 的行业归属应来自 `index_member_all` 的历史区间匹配结果。",
             "- 第一期只验证最近 5 个交易日闭环，报告用于暴露接口权限、覆盖率和字段质量问题。",
         ]
     )

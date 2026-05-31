@@ -71,4 +71,19 @@ class TushareClient:
         return self._pro.index_classify(src="SW2021")
 
     def index_member_all(self) -> pd.DataFrame:
-        return self._pro.index_member_all()
+        return self._query_all("index_member_all", page_size=3000)
+
+    def _query_all(self, api_name: str, page_size: int = 3000, **kwargs) -> pd.DataFrame:
+        frames: list[pd.DataFrame] = []
+        offset = 0
+        while True:
+            frame = self._pro.query(api_name, limit=page_size, offset=offset, **kwargs)
+            if frame.empty:
+                break
+            frames.append(frame)
+            if len(frame) < page_size:
+                break
+            offset += page_size
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True).drop_duplicates(ignore_index=True)

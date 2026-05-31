@@ -78,10 +78,12 @@ def test_run_quality_checks_writes_markdown_report(tmp_path: Path) -> None:
     assert report_path.exists()
     content = report_path.read_text(encoding="utf-8")
     assert "A股日频数据底座一期质检报告" in content
+    assert "WARN 关键字段缺失率" in content
     assert "FAIL OHLC 合理性检查" in content
     assert "WARN daily 与 daily_basic 覆盖差异" in content
     assert "WARN 申万历史行业归属匹配率" in content
     assert "`20240506, 20240507`" in content
+    assert "`daily_basic.turnover_rate`=33.33%" in content
 
 
 def test_date_coverage_flags_missing_expected_trade_date(tmp_path: Path) -> None:
@@ -105,3 +107,33 @@ def test_report_defaults_to_duckdb_sibling_reports_directory(tmp_path: Path) -> 
     report_path = run_quality_checks(settings)
 
     assert report_path.parent == db_path.parent / "reports" / "dq"
+
+
+def test_primary_key_duplicate_check_flags_duplicate_groups(tmp_path: Path) -> None:
+    db_path = tmp_path / "warehouse.duckdb"
+    _prepare_database(db_path)
+
+    with duckdb.connect(str(db_path)) as con:
+        con.execute(
+            """
+            INSERT INTO daily VALUES
+            ('000001.SZ', '20240506', 10.1, 11.2, 9.1, 10.6, 1001, 2001)
+            """
+        )
+
+    report_path = run_quality_checks(build_settings_for_path(db_path, tmp_path))
+    content = report_path.read_text(encoding="utf-8")
+
+    assert "FAIL 主键重复检查" in content
+    assert "发现重复主键: `daily`=1" in content
+
+
+def test_missing_rates_include_daily_basic_fields(tmp_path: Path) -> None:
+    db_path = tmp_path / "warehouse.duckdb"
+    _prepare_database(db_path)
+
+    report_path = run_quality_checks(build_settings_for_path(db_path, tmp_path))
+    content = report_path.read_text(encoding="utf-8")
+
+    assert "WARN 关键字段缺失率" in content
+    assert "- `daily_basic.turnover_rate`: missing `1/3`, rate `33.33%`" in content

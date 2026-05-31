@@ -99,4 +99,4 @@ def test_build_daily_panel_matches_historical_industry(tmp_path: Path) -> None:
     report_path = run_quality_checks(settings, expected_trade_dates=["20260525"])
     report = report_path.read_text(encoding="utf-8")
     assert "PASS 主键重复检查" in report
-    assert "申万历史行业归属匹配率: 100.00%" in report
+    assert "申万历史行业归属匹配率 100.00%" in report

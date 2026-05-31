@@ -1,6 +1,6 @@
 # A-share Data Foundation
 
-这是一期 A 股日频数据底座项目。
+这是一个 A 股日频数据底座项目。
 
 当前已补齐的数据质检模块，目标是把 `daily`、`daily_basic`、`daily_panel` 这几张核心表的基础质量问题先暴露出来，并把结果写成 Markdown 报告，方便人工扫读。
 
@@ -13,9 +13,9 @@
 ## 质检内容
 
 - 主键重复：默认检查 `ts_code + trade_date`
-- 日期覆盖：汇总最小日期、最大日期、交易日数量，并可校验期望交易日
-- 关键字段缺失率：关注 `daily`、`daily_basic`、`daily_panel` 的关键列
-- OHLC 合理性：检查价格非负、`high >= open/close/low`、`low <= open/close`
+- 日期覆盖：汇总最小日期、最大日期、交易日数量，并可校验预期交易日
+- 关键字段缺失率：检查 `daily`、`daily_basic`、`daily_panel` 中存在的关键字段
+- OHLC 合理性：检查 `high >= open/close/low`、`low <= open/close`，并识别空值
 - `daily` 与 `daily_basic` 覆盖差异：找出只存在于单边的主键记录
 - 行业历史归属匹配率：按 `in_date/out_date` 区间检查日频记录能否匹配行业历史
 
@@ -56,4 +56,4 @@ pytest
 
 - 当前 `dq.py` 只依赖 `settings.duckdb_path`
 - 如果主工程后续提供 `settings.report_dir`、`settings.reports_dir` 或 `settings.project_root`，报告目录会自动跟随
-- 行业历史表默认优先识别 `index_member_all`，其次识别 `stock_industry_history`、`sw_industry_member`、`industry_member`
+- 行业历史表默认优先识别 `index_member_all`，其次识别 `stock_industry_history`
