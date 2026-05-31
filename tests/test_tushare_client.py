@@ -30,3 +30,43 @@ def test_index_member_all_fetches_current_and_historical_rows(monkeypatch) -> No
     assert [call["is_new"] for call in calls] == ["Y", "N"]
     assert len(frame) == 2
     assert set(frame["is_new"]) == {"Y", "N"}
+
+
+def test_index_weight_passes_date_range_and_keeps_expected_columns(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+    sentinel = object()
+
+    def fake_call_with_retry(self, fn, **kwargs) -> pd.DataFrame:
+        captured.update(kwargs)
+        return pd.DataFrame(
+            [
+                {
+                    "index_code": "000300.SH",
+                    "con_code": "000001.SZ",
+                    "trade_date": "20260530",
+                    "weight": 3.2,
+                    "extra": "ignored",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(TushareClient, "__post_init__", lambda self: None)
+    monkeypatch.setattr(TushareClient, "_call_with_retry", fake_call_with_retry)
+
+    client = TushareClient(Settings(TUSHARE_TOKEN="test-token"))
+    object.__setattr__(client, "_pro", type("FakePro", (), {"index_weight": sentinel})())
+    frame = client.index_weight("000300.SH", "20260501", "20260531")
+
+    assert captured == {
+        "index_code": "000300.SH",
+        "start_date": "20260501",
+        "end_date": "20260531",
+    }
+    assert frame.to_dict(orient="records") == [
+        {
+            "index_code": "000300.SH",
+            "con_code": "000001.SZ",
+            "trade_date": "20260530",
+            "weight": 3.2,
+        }
+    ]

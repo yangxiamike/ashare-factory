@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS index_member_all (
     is_new VARCHAR
 );
 
+CREATE TABLE IF NOT EXISTS index_weight (
+    index_code VARCHAR,
+    con_code VARCHAR,
+    trade_date VARCHAR,
+    weight DOUBLE
+);
+
 CREATE TABLE IF NOT EXISTS daily_panel AS SELECT * FROM daily WHERE 1 = 0;
 
 CREATE TABLE IF NOT EXISTS ingest_status (

@@ -72,6 +72,7 @@ EXPECTED_COLUMNS: dict[str, list[str]] = {
         "out_date",
         "is_new",
     ],
+    "index_weight": ["index_code", "con_code", "trade_date", "weight"],
 }
 
 NON_TEXT_COLUMNS: dict[str, set[str]] = {
@@ -96,6 +97,7 @@ NON_TEXT_COLUMNS: dict[str, set[str]] = {
         "circ_mv",
     },
     "stk_limit": {"up_limit", "down_limit"},
+    "index_weight": {"weight"},
 }
 
 TEXT_COLUMNS: dict[str, list[str]] = {
@@ -176,6 +178,26 @@ def write_raw_partition(settings: Settings, endpoint: str, trade_date: str, fram
     return path
 
 
+def raw_index_partition_path(settings: Settings, endpoint: str, index_code: str, trade_date: str) -> Path:
+    settings = resolved(settings)
+    return (
+        settings.raw_dir
+        / endpoint
+        / f"index_code={index_code}"
+        / f"trade_date={trade_date}"
+        / f"{endpoint}.parquet"
+    )
+
+
+def write_raw_index_partition(
+    settings: Settings, endpoint: str, index_code: str, trade_date: str, frame: pd.DataFrame
+) -> Path:
+    path = raw_index_partition_path(settings, endpoint, index_code, trade_date)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    normalize_frame(endpoint, frame).to_parquet(path, index=False)
+    return path
+
+
 def has_raw_daily_partition(settings: Settings, endpoint: str, trade_date: str) -> bool:
     return raw_partition_path(settings, endpoint, trade_date).exists()
 
@@ -211,6 +233,26 @@ def upsert_trade_date_table(
             return 0
         con.register("_frame", frame)
         con.execute(f"INSERT INTO {table_name} SELECT * FROM _frame")
+        con.unregister("_frame")
+    return len(frame)
+
+
+def upsert_index_weight_table(
+    settings: Settings, index_code: str, trade_date: str, frame: pd.DataFrame
+) -> int:
+    frame = normalize_frame("index_weight", frame)
+    with connect(settings) as con:
+        con.execute(
+            """
+            DELETE FROM index_weight
+            WHERE index_code = ? AND trade_date = ?
+            """,
+            [index_code, trade_date],
+        )
+        if frame.empty:
+            return 0
+        con.register("_frame", frame)
+        con.execute("INSERT INTO index_weight SELECT * FROM _frame")
         con.unregister("_frame")
     return len(frame)
 

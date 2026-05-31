@@ -4,7 +4,7 @@ import typer
 
 from ashare_data.config import Settings
 from ashare_data.dq import run_quality_checks
-from ashare_data.ingest import ingest_history, ingest_history_verbose, ingest_recent
+from ashare_data.ingest import ingest_history, ingest_history_verbose, ingest_index_weight, ingest_recent
 from ashare_data.panel import build_daily_panel
 from ashare_data.storage import initialize_warehouse
 
@@ -106,6 +106,32 @@ def ingest_history_verbose_cmd(
             "Completed chunks: "
             f"{len(result.chunks)}, trade_dates={len(result.trade_dates)}, failed={result.failed_total}"
         )
+    except Exception as exc:
+        _fail(exc)
+
+
+@app.command("ingest-index-weight")
+def ingest_index_weight_cmd(
+    start_date: str = typer.Option(..., "--start-date", help="Start date (YYYYMMDD)."),
+    end_date: str = typer.Option(..., "--end-date", help="End date (YYYYMMDD)."),
+    index_code: list[str] | None = typer.Option(None, "--index-code", help="Index code to ingest. Repeatable."),
+    force: bool = typer.Option(False, "--force", help="Re-fetch partitions even when already successful."),
+) -> None:
+    """Fetch broad index constituent weights into raw partitions and DuckDB."""
+    try:
+        settings = _settings()
+        result = ingest_index_weight(
+            settings,
+            start_date=start_date,
+            end_date=end_date,
+            index_codes=index_code,
+            force=force,
+        )
+        typer.echo(f"Ingested index codes: {', '.join(result.index_codes)}")
+        typer.echo(f"Ingested trade dates: {len(result.trade_dates)}")
+        typer.echo(f"Rows written: {result.row_count}, skipped={result.skipped}, failed={result.failed}")
+        typer.echo(f"Raw data root: {settings.raw_dir}")
+        typer.echo(f"Warehouse: {settings.duckdb_path}")
     except Exception as exc:
         _fail(exc)
 

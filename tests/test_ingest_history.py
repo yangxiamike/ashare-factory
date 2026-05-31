@@ -4,7 +4,7 @@ import duckdb
 import pandas as pd
 
 from ashare_data.config import Settings
-from ashare_data.ingest import ingest_history, ingest_recent
+from ashare_data.ingest import ingest_history, ingest_index_weight, ingest_recent
 
 
 class FakeTushareClient:
@@ -66,6 +66,40 @@ class FakeTushareClient:
     def stk_limit(self, trade_date: str) -> pd.DataFrame:
         self._count("stk_limit")
         return pd.DataFrame([{"ts_code": "000001.SZ", "trade_date": trade_date, "up_limit": 11.0}])
+
+    def index_weight(self, index_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        self._count(f"index_weight:{index_code}")
+        rows = {
+            "000300.SH": [
+                {
+                    "index_code": "000300.SH",
+                    "con_code": "000001.SZ",
+                    "trade_date": "20260525",
+                    "weight": 3.1,
+                },
+                {
+                    "index_code": "000300.SH",
+                    "con_code": "000001.SZ",
+                    "trade_date": "20260526",
+                    "weight": 3.2,
+                },
+            ],
+            "000905.SH": [
+                {
+                    "index_code": "000905.SH",
+                    "con_code": "000002.SZ",
+                    "trade_date": "20260525",
+                    "weight": 1.5,
+                },
+                {
+                    "index_code": "000905.SH",
+                    "con_code": "000002.SZ",
+                    "trade_date": "20260526",
+                    "weight": 1.6,
+                },
+            ],
+        }
+        return pd.DataFrame(rows[index_code])
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -162,3 +196,82 @@ def test_ingest_recent_upserts_daily_tables_without_dropping_history(
     assert adj_dates == expected
     assert basic_dates == expected
     assert limit_dates == expected
+
+
+def test_ingest_index_weight_is_idempotent_and_keeps_multiple_indexes(tmp_path: Path, monkeypatch) -> None:
+    import ashare_data.ingest as ingest_module
+
+    FakeTushareClient.reset()
+    monkeypatch.setattr(ingest_module, "TushareClient", FakeTushareClient)
+    settings = _settings(tmp_path)
+
+    first = ingest_index_weight(
+        settings,
+        start_date="20260525",
+        end_date="20260526",
+        index_codes=["000300.SH", "000905.SH"],
+    )
+    assert first.row_count == 4
+    assert first.skipped == 0
+    assert first.failed == 0
+
+    second = ingest_index_weight(
+        settings,
+        start_date="20260525",
+        end_date="20260526",
+        index_codes=["000300.SH", "000905.SH"],
+    )
+    assert second.row_count == 0
+    assert second.skipped == 4
+    assert second.failed == 0
+    assert FakeTushareClient.calls["index_weight:000300.SH"] == 2
+    assert FakeTushareClient.calls["index_weight:000905.SH"] == 2
+
+    forced = ingest_index_weight(
+        settings,
+        start_date="20260525",
+        end_date="20260526",
+        index_codes=["000300.SH", "000905.SH"],
+        force=True,
+    )
+    assert forced.row_count == 4
+
+    with duckdb.connect(str(settings.duckdb_path)) as con:
+        rows = con.execute(
+            """
+            SELECT index_code, con_code, trade_date, weight
+            FROM index_weight
+            ORDER BY index_code, trade_date
+            """
+        ).fetchall()
+        statuses = con.execute(
+            """
+            SELECT endpoint, trade_date, status
+            FROM ingest_status
+            WHERE endpoint LIKE 'index_weight:%'
+            ORDER BY endpoint, trade_date
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("000300.SH", "000001.SZ", "20260525", 3.1),
+        ("000300.SH", "000001.SZ", "20260526", 3.2),
+        ("000905.SH", "000002.SZ", "20260525", 1.5),
+        ("000905.SH", "000002.SZ", "20260526", 1.6),
+    ]
+    assert statuses == [
+        ("index_weight:000300.SH", "20260525", "success"),
+        ("index_weight:000300.SH", "20260526", "success"),
+        ("index_weight:000905.SH", "20260525", "success"),
+        ("index_weight:000905.SH", "20260526", "success"),
+    ]
+
+    assert (
+        tmp_path
+        / "data"
+        / "raw"
+        / "index_weight"
+        / "index_code=000300.SH"
+        / "trade_date=20260525"
+        / "index_weight.parquet"
+    ).exists()

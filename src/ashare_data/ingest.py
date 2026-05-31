@@ -8,14 +8,17 @@ from typing import Callable
 import pandas as pd
 
 from ashare_data.config import Settings
+from ashare_data.constants import BROAD_INDEX_CODES
 from ashare_data.storage import (
     has_successful_ingest,
     initialize_warehouse,
     record_ingest_status,
     replace_table,
+    upsert_index_weight_table,
     upsert_trade_cal_table,
     upsert_trade_date_table,
     write_raw,
+    write_raw_index_partition,
     write_raw_partition,
 )
 from ashare_data.tushare_client import TushareClient
@@ -47,6 +50,15 @@ class HistoryChunkResult:
     end_date: str
     result: HistoryIngestResult
     elapsed_seconds: float
+
+
+@dataclass(frozen=True)
+class IndexWeightIngestResult:
+    index_codes: list[str]
+    trade_dates: list[str]
+    row_count: int
+    skipped: int
+    failed: int
 
 
 @dataclass(frozen=True)
@@ -200,6 +212,107 @@ def ingest_history(
     )
 
 
+def ingest_index_weight(
+    settings: Settings,
+    start_date: str,
+    end_date: str,
+    index_codes: list[str] | None = None,
+    force: bool = False,
+) -> IndexWeightIngestResult:
+    settings = settings.resolve_paths()
+    initialize_warehouse(settings)
+    client = TushareClient(settings)
+    start_date, end_date = _resolve_date_range(start_date, end_date, years=None)
+    selected_index_codes = list(index_codes or BROAD_INDEX_CODES)
+
+    row_count = 0
+    skipped = 0
+    failed = 0
+    ingested_trade_dates: set[str] = set()
+
+    for index_code in selected_index_codes:
+        started_at = datetime.now().isoformat(sep=" ", timespec="seconds")
+        try:
+            frame = client.index_weight(index_code=index_code, start_date=start_date, end_date=end_date)
+        except Exception as exc:
+            failed += 1
+            record_ingest_status(
+                settings,
+                _index_weight_status_endpoint(index_code),
+                end_date,
+                "failed",
+                error_message=str(exc),
+                started_at=started_at,
+                finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
+            )
+            raise
+
+        if frame.empty:
+            continue
+
+        for trade_date, trade_date_frame in frame.groupby("trade_date", sort=True):
+            normalized_trade_date = str(trade_date)
+            status_endpoint = _index_weight_status_endpoint(index_code)
+            if not force and has_successful_ingest(settings, status_endpoint, normalized_trade_date):
+                skipped += 1
+                continue
+
+            partition_started_at = datetime.now().isoformat(sep=" ", timespec="seconds")
+            try:
+                record_ingest_status(
+                    settings,
+                    status_endpoint,
+                    normalized_trade_date,
+                    "running",
+                    started_at=partition_started_at,
+                    finished_at=partition_started_at,
+                )
+                normalized_frame = trade_date_frame.loc[:, ["index_code", "con_code", "trade_date", "weight"]]
+                raw_path = write_raw_index_partition(
+                    settings,
+                    "index_weight",
+                    index_code,
+                    normalized_trade_date,
+                    normalized_frame,
+                )
+                row_count += upsert_index_weight_table(
+                    settings,
+                    index_code,
+                    normalized_trade_date,
+                    normalized_frame,
+                )
+                ingested_trade_dates.add(normalized_trade_date)
+                record_ingest_status(
+                    settings,
+                    status_endpoint,
+                    normalized_trade_date,
+                    "success",
+                    len(normalized_frame),
+                    raw_path,
+                    started_at=partition_started_at,
+                    finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
+                )
+            except Exception as exc:
+                failed += 1
+                record_ingest_status(
+                    settings,
+                    status_endpoint,
+                    normalized_trade_date,
+                    "failed",
+                    error_message=str(exc),
+                    started_at=partition_started_at,
+                    finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
+                )
+
+    return IndexWeightIngestResult(
+        index_codes=selected_index_codes,
+        trade_dates=sorted(ingested_trade_dates),
+        row_count=row_count,
+        skipped=skipped,
+        failed=failed,
+    )
+
+
 def ingest_history_verbose(
     settings: Settings,
     start_date: str | None = None,
@@ -340,3 +453,7 @@ def _persist_recent_daily_endpoint(
         write_raw_partition(settings, endpoint, trade_date, frame)
         rows += upsert_trade_date_table(settings, endpoint, trade_date, frame)
     return rows
+
+
+def _index_weight_status_endpoint(index_code: str) -> str:
+    return f"index_weight:{index_code}"

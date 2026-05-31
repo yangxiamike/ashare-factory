@@ -8,7 +8,9 @@ from ashare_data.storage import (
     has_raw_daily_partition,
     initialize_warehouse,
     record_ingest_status,
+    upsert_index_weight_table,
     upsert_trade_date_table,
+    write_raw_index_partition,
     write_raw_partition,
 )
 
@@ -90,3 +92,47 @@ def test_upsert_trade_date_table_is_idempotent_on_trade_date_ts_code(tmp_path: P
         ).fetchall()
     assert len(rows) == 1
     assert rows[0][2] == 12.0
+
+
+def test_index_weight_raw_partition_and_upsert_preserve_other_indexes(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    initialize_warehouse(settings)
+
+    hs300_first = pd.DataFrame(
+        [{"index_code": "000300.SH", "con_code": "000001.SZ", "trade_date": "20260530", "weight": 3.1}]
+    )
+    hs300_second = pd.DataFrame(
+        [{"index_code": "000300.SH", "con_code": "000001.SZ", "trade_date": "20260530", "weight": 3.3}]
+    )
+    zz500 = pd.DataFrame(
+        [{"index_code": "000905.SH", "con_code": "000002.SZ", "trade_date": "20260530", "weight": 1.8}]
+    )
+
+    path = write_raw_index_partition(settings, "index_weight", "000300.SH", "20260530", hs300_first)
+    upsert_index_weight_table(settings, "000300.SH", "20260530", hs300_first)
+    upsert_index_weight_table(settings, "000905.SH", "20260530", zz500)
+    upsert_index_weight_table(settings, "000300.SH", "20260530", hs300_second)
+
+    assert path == (
+        tmp_path
+        / "data"
+        / "raw"
+        / "index_weight"
+        / "index_code=000300.SH"
+        / "trade_date=20260530"
+        / "index_weight.parquet"
+    )
+
+    with duckdb.connect(str(settings.duckdb_path)) as con:
+        rows = con.execute(
+            """
+            SELECT index_code, con_code, trade_date, weight
+            FROM index_weight
+            ORDER BY index_code, con_code
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("000300.SH", "000001.SZ", "20260530", 3.3),
+        ("000905.SH", "000002.SZ", "20260530", 1.8),
+    ]

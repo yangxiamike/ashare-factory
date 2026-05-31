@@ -105,6 +105,18 @@ class TushareClient:
             return pd.DataFrame()
         return pd.concat(frames, ignore_index=True).drop_duplicates(ignore_index=True)
 
+    def index_weight(self, index_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+        frame = self._call_with_retry(
+            self._pro.index_weight,
+            index_code=index_code,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if frame.empty:
+            return pd.DataFrame(columns=["index_code", "con_code", "trade_date", "weight"])
+        columns = ["index_code", "con_code", "trade_date", "weight"]
+        return frame.loc[:, [column for column in columns if column in frame.columns]]
+
     def _query_all(self, api_name: str, page_size: int = 3000, **kwargs) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
         offset = 0
