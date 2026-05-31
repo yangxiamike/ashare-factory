@@ -96,7 +96,14 @@ class TushareClient:
         return self._call_with_retry(self._pro.index_classify, src="SW2021")
 
     def index_member_all(self) -> pd.DataFrame:
-        return self._query_all("index_member_all", page_size=3000)
+        frames = [
+            self._query_all("index_member_all", page_size=2000, is_new=is_new)
+            for is_new in ["Y", "N"]
+        ]
+        frames = [frame for frame in frames if not frame.empty]
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True).drop_duplicates(ignore_index=True)
 
     def _query_all(self, api_name: str, page_size: int = 3000, **kwargs) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
