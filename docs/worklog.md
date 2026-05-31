@@ -26,7 +26,7 @@
 ### 单因子研究下一步规划
 
 - Claude Code review 了 `01_single_factor_mvp.ipynb`，确认整体流程正确（预处理管线、forward return 口径、7 步检验流程）。
-- 指出了 4 个改进点（函数重复、缺少行业中性化、缺少 IC decay、回测太简化），已记录到 `docs/plans/2026-06-01-notebook-01-issues.md`，交给 Codex 执行。
+- 指出了 4 个改进点（函数重复、缺少行业中性化、缺少 IC decay、回测太简化），已记录到 `codex-tasks/2026-06-01-notebook-01-issues.md`，交给 Codex 执行。
 - 写了下一步计划 `docs/plans/2026-06-01-next-phase-plan.md`，包含：
   - `notebooks/02_factor_batch.ipynb` 的内容设计（批量因子 + 行业中性化 + 宽基对比 + 因子入库）
   - 因子注册表 schema（`factor_registry` / `factor_values` / `factor_eval_daily`）
