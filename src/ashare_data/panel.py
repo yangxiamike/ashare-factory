@@ -17,31 +17,18 @@ def build_daily_panel(
         if start_date or end_date:
             con.execute("DROP TABLE IF EXISTS _daily_panel_range")
             con.execute(f"CREATE TEMP TABLE _daily_panel_range AS {select_sql}", select_params)
-            existing_columns = {
-                row[0]
-                for row in con.execute(
+            if _daily_panel_schema_changed(con):
+                full_sql, full_params = _panel_select_sql(settings, None, None)
+                con.execute(f"CREATE OR REPLACE TABLE daily_panel AS {full_sql}", full_params)
+                return con.execute(
                     """
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_schema = 'main' AND table_name = 'daily_panel'
-                    """
-                ).fetchall()
-            }
-            range_columns = {
-                row[0]
-                for row in con.execute(
-                    """
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_name = '_daily_panel_range'
-                    """
-                ).fetchall()
-            }
-            if existing_columns and existing_columns != range_columns:
-                existing_rows = con.execute("SELECT COUNT(*) FROM daily_panel").fetchone()[0]
-                if existing_rows:
-                    raise RuntimeError("daily_panel schema mismatch; run full build-panel first.")
-                con.execute("DROP TABLE daily_panel")
+                    SELECT COUNT(*)
+                    FROM daily_panel
+                    WHERE (? IS NULL OR trade_date >= ?)
+                      AND (? IS NULL OR trade_date <= ?)
+                    """,
+                    [start_date, start_date, end_date, end_date],
+                ).fetchone()[0]
             con.execute("CREATE TABLE IF NOT EXISTS daily_panel AS SELECT * FROM _daily_panel_range WHERE 1 = 0")
             con.execute(
                 """
@@ -71,6 +58,30 @@ def _panel_select_sql(
 ) -> tuple[str, list[str | None]]:
     sql = (settings.sql_dir / "build_daily_panel.sql").read_text(encoding="utf-8")
     return sql, [start_date, start_date, end_date, end_date]
+
+
+def _daily_panel_schema_changed(con) -> bool:
+    existing_columns = {
+        row[0]
+        for row in con.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'main' AND table_name = 'daily_panel'
+            """
+        ).fetchall()
+    }
+    range_columns = {
+        row[0]
+        for row in con.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = '_daily_panel_range'
+            """
+        ).fetchall()
+    }
+    return bool(existing_columns) and existing_columns != range_columns
 
 
 def _validate_range(start_date: str | None, end_date: str | None) -> None:

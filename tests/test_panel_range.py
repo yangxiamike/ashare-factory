@@ -69,3 +69,32 @@ def test_build_panel_range_requires_both_dates(tmp_path: Path) -> None:
         assert "provided together" in str(exc)
     else:
         raise AssertionError("Expected ValueError for missing end_date")
+
+
+def test_build_panel_range_rebuilds_full_table_when_schema_changes(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    initialize_warehouse(settings)
+    _seed_minimal_tables(settings)
+
+    assert build_daily_panel(settings) == 2
+
+    with connect(settings) as con:
+        con.execute("ALTER TABLE daily_panel DROP COLUMN sw_l1_name")
+
+    assert build_daily_panel(settings, start_date="20260525", end_date="20260525") == 1
+
+    with connect(settings) as con:
+        columns = {
+            row[0]
+            for row in con.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'main' AND table_name = 'daily_panel'
+                """
+            ).fetchall()
+        }
+        total_rows = con.execute("SELECT COUNT(*) FROM daily_panel").fetchone()[0]
+
+    assert "sw_l1_name" in columns
+    assert total_rows == 2

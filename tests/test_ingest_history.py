@@ -95,7 +95,8 @@ def test_ingest_history_skips_successful_partitions_and_force_refetches(
         end_date="20260526",
         rate_limit_per_minute=0,
     )
-    assert first.failed == {}
+    assert first.failed == {endpoint: 0 for endpoint in ingest_module.DAILY_ENDPOINTS}
+    assert first.skipped == {endpoint: 0 for endpoint in ingest_module.DAILY_ENDPOINTS}
     assert FakeTushareClient.calls["daily"] == 2
 
     second = ingest_history(
@@ -104,7 +105,9 @@ def test_ingest_history_skips_successful_partitions_and_force_refetches(
         end_date="20260526",
         rate_limit_per_minute=0,
     )
+    assert second.row_counts["daily"] == 0
     assert second.skipped["daily"] == 2
+    assert second.skipped["adj_factor"] == 2
     assert FakeTushareClient.calls["daily"] == 2
 
     forced = ingest_history(
@@ -114,7 +117,7 @@ def test_ingest_history_skips_successful_partitions_and_force_refetches(
         rate_limit_per_minute=0,
         force=True,
     )
-    assert forced.failed == {}
+    assert forced.failed == {endpoint: 0 for endpoint in ingest_module.DAILY_ENDPOINTS}
     assert FakeTushareClient.calls["daily"] == 4
 
     partition = tmp_path / "data" / "raw" / "daily" / "trade_date=20260525" / "daily.parquet"
@@ -143,7 +146,7 @@ def test_ingest_recent_upserts_daily_tables_without_dropping_history(
         end_date="20260526",
         rate_limit_per_minute=0,
     )
-    assert first.failed == {}
+    assert first.failed == {endpoint: 0 for endpoint in ingest_module.DAILY_ENDPOINTS}
 
     recent = ingest_recent(settings, days=1)
     assert recent.trade_dates == ["20260526"]

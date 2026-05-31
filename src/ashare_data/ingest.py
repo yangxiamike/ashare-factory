@@ -147,9 +147,9 @@ def ingest_history(
     )
     upsert_trade_cal_table(settings, trade_cal)
 
-    row_counts: dict[str, int] = {"trade_cal": len(trade_cal)}
-    skipped: dict[str, int] = {}
-    failed: dict[str, int] = {}
+    row_counts: dict[str, int] = {"trade_cal": len(trade_cal), **{endpoint: 0 for endpoint in DAILY_ENDPOINTS}}
+    skipped: dict[str, int] = {endpoint: 0 for endpoint in DAILY_ENDPOINTS}
+    failed: dict[str, int] = {endpoint: 0 for endpoint in DAILY_ENDPOINTS}
 
     for endpoint in STATIC_ENDPOINTS:
         frame = _call_with_retry(client, endpoint, limiter, retries)
@@ -161,7 +161,7 @@ def ingest_history(
         for endpoint in DAILY_ENDPOINTS:
             if not force and has_successful_ingest(settings, endpoint, trade_date):
                 if has_raw_daily_partition(settings, endpoint, trade_date):
-                    skipped[endpoint] = skipped.get(endpoint, 0) + 1
+                    skipped[endpoint] += 1
                     continue
 
             started_at: str | None = None
@@ -172,9 +172,7 @@ def ingest_history(
                 )
                 frame = _call_with_retry(client, endpoint, limiter, retries, trade_date)
                 raw_path = write_raw_partition(settings, endpoint, trade_date, frame)
-                row_counts[endpoint] = row_counts.get(endpoint, 0) + upsert_trade_date_table(
-                    settings, endpoint, trade_date, frame
-                )
+                row_counts[endpoint] += upsert_trade_date_table(settings, endpoint, trade_date, frame)
                 record_ingest_status(
                     settings,
                     endpoint,
@@ -186,7 +184,7 @@ def ingest_history(
                     finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
                 )
             except Exception as exc:
-                failed[endpoint] = failed.get(endpoint, 0) + 1
+                failed[endpoint] += 1
                 record_ingest_status(
                     settings,
                     endpoint,
