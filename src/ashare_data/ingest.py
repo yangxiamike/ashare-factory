@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from time import sleep
+from time import monotonic, sleep
+from typing import Callable
 
 import pandas as pd
 
@@ -36,6 +37,32 @@ class HistoryIngestResult:
     row_counts: dict[str, int]
     skipped: dict[str, int]
     failed: dict[str, int]
+
+
+@dataclass(frozen=True)
+class HistoryChunkResult:
+    chunk_index: int
+    total_chunks: int
+    start_date: str
+    end_date: str
+    result: HistoryIngestResult
+    elapsed_seconds: float
+
+
+@dataclass(frozen=True)
+class VerboseHistoryIngestResult:
+    chunks: list[HistoryChunkResult]
+
+    @property
+    def trade_dates(self) -> list[str]:
+        dates: list[str] = []
+        for chunk in self.chunks:
+            dates.extend(chunk.result.trade_dates)
+        return dates
+
+    @property
+    def failed_total(self) -> int:
+        return sum(sum(chunk.result.failed.values()) for chunk in self.chunks)
 
 
 class RateLimiter:
@@ -173,6 +200,63 @@ def ingest_history(
     )
 
 
+def ingest_history_verbose(
+    settings: Settings,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    years: int | None = None,
+    rate_limit_per_minute: int = 0,
+    force: bool = False,
+    retries: int = 2,
+    progress: Callable[[str], None] | None = None,
+) -> VerboseHistoryIngestResult:
+    start_date, end_date = _resolve_date_range(start_date, end_date, years)
+    chunks = _month_chunks(start_date, end_date)
+    chunk_results: list[HistoryChunkResult] = []
+    started = monotonic()
+
+    for index, (chunk_start, chunk_end) in enumerate(chunks, start=1):
+        chunk_started = monotonic()
+        _emit(
+            progress,
+            f"[{index}/{len(chunks)}] ingest {chunk_start}-{chunk_end} "
+            f"({(index - 1) / len(chunks):.1%} complete)",
+        )
+        result = ingest_history(
+            settings,
+            start_date=chunk_start,
+            end_date=chunk_end,
+            rate_limit_per_minute=rate_limit_per_minute,
+            force=force,
+            retries=retries,
+        )
+        elapsed = monotonic() - chunk_started
+        chunk_results.append(
+            HistoryChunkResult(
+                chunk_index=index,
+                total_chunks=len(chunks),
+                start_date=chunk_start,
+                end_date=chunk_end,
+                result=result,
+                elapsed_seconds=elapsed,
+            )
+        )
+        avg = (monotonic() - started) / index
+        remaining = avg * (len(chunks) - index)
+        _emit(
+            progress,
+            f"[{index}/{len(chunks)}] done {chunk_start}-{chunk_end}: "
+            f"trade_dates={len(result.trade_dates)}, "
+            f"success_rows={sum(result.row_counts.values())}, "
+            f"skipped={sum(result.skipped.values())}, "
+            f"failed={sum(result.failed.values())}, "
+            f"elapsed={_format_duration(elapsed)}, "
+            f"ETA={_format_duration(remaining)}",
+        )
+
+    return VerboseHistoryIngestResult(chunks=chunk_results)
+
+
 def _resolve_date_range(
     start_date: str | None, end_date: str | None, years: int | None
 ) -> tuple[str, str]:
@@ -190,6 +274,38 @@ def _resolve_date_range(
     if start_date > end_date:
         raise ValueError("start_date must be <= end_date.")
     return start_date, end_date
+
+
+def _month_chunks(start_date: str, end_date: str) -> list[tuple[str, str]]:
+    start = datetime.strptime(start_date, "%Y%m%d").date()
+    end = datetime.strptime(end_date, "%Y%m%d").date()
+    chunks: list[tuple[str, str]] = []
+    current = start
+    while current <= end:
+        if current.month == 12:
+            next_month = current.replace(year=current.year + 1, month=1, day=1)
+        else:
+            next_month = current.replace(month=current.month + 1, day=1)
+        chunk_end = min(end, next_month - timedelta(days=1))
+        chunks.append((current.strftime("%Y%m%d"), chunk_end.strftime("%Y%m%d")))
+        current = chunk_end + timedelta(days=1)
+    return chunks
+
+
+def _emit(progress: Callable[[str], None] | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m{sec:02d}s"
+    if minutes:
+        return f"{minutes}m{sec:02d}s"
+    return f"{sec}s"
 
 
 def _call_with_retry(

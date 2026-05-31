@@ -4,7 +4,7 @@ import typer
 
 from ashare_data.config import Settings
 from ashare_data.dq import run_quality_checks
-from ashare_data.ingest import ingest_history, ingest_recent
+from ashare_data.ingest import ingest_history, ingest_history_verbose, ingest_recent
 from ashare_data.panel import build_daily_panel
 from ashare_data.storage import initialize_warehouse
 
@@ -68,6 +68,40 @@ def ingest_history_cmd(
         typer.echo(f"Ingested trade dates: {len(result.trade_dates)}")
         typer.echo(f"Raw data root: {settings.raw_dir}")
         typer.echo(f"Warehouse: {settings.duckdb_path}")
+    except Exception as exc:
+        _fail(exc)
+
+
+@app.command("ingest-history-verbose")
+def ingest_history_verbose_cmd(
+    start_date: str | None = typer.Option(None, "--start-date", help="Start date (YYYYMMDD)."),
+    end_date: str | None = typer.Option(None, "--end-date", help="End date (YYYYMMDD)."),
+    years: int | None = typer.Option(None, "--years", help="Rolling years when start-date is not provided."),
+    force: bool = typer.Option(False, "--force", help="Re-fetch partitions even when already successful."),
+    rate_limit_per_minute: int = typer.Option(
+        0,
+        "--rate-limit-per-minute",
+        help="Extra caller-side API calls per minute. 0 means rely on TushareClient rate limit.",
+    ),
+    retries: int = typer.Option(2, "--retries", help="Retry attempts per request."),
+) -> None:
+    """Historical ingest by month with progress, ETA, and resume/skip output."""
+    try:
+        settings = _settings()
+        result = ingest_history_verbose(
+            settings,
+            start_date=start_date,
+            end_date=end_date,
+            years=years,
+            force=force,
+            rate_limit_per_minute=rate_limit_per_minute,
+            retries=retries,
+            progress=typer.echo,
+        )
+        typer.echo(
+            "Completed chunks: "
+            f"{len(result.chunks)}, trade_dates={len(result.trade_dates)}, failed={result.failed_total}"
+        )
     except Exception as exc:
         _fail(exc)
 
