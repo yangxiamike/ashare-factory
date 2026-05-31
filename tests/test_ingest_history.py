@@ -4,7 +4,7 @@ import duckdb
 import pandas as pd
 
 from ashare_data.config import Settings
-from ashare_data.ingest import ingest_history
+from ashare_data.ingest import ingest_history, ingest_recent
 
 
 class FakeTushareClient:
@@ -28,6 +28,10 @@ class FakeTushareClient:
                 {"exchange": "SSE", "cal_date": "20260526", "is_open": "1"},
             ]
         )
+
+    def recent_trade_calendar(self, days: int = 5, lookback_days: int = 45) -> tuple[pd.DataFrame, list[str]]:
+        frame = self.trade_cal("20260525", "20260526")
+        return frame, ["20260525", "20260526"][-days:]
 
     def stock_basic(self) -> pd.DataFrame:
         self._count("stock_basic")
@@ -122,3 +126,36 @@ def test_ingest_history_skips_successful_partitions_and_force_refetches(
         ).fetchone()[0]
     assert daily_rows == 2
     assert success_rows == 2
+
+
+def test_ingest_recent_upserts_daily_tables_without_dropping_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import ashare_data.ingest as ingest_module
+
+    FakeTushareClient.reset()
+    monkeypatch.setattr(ingest_module, "TushareClient", FakeTushareClient)
+    settings = _settings(tmp_path)
+
+    first = ingest_history(
+        settings,
+        start_date="20260525",
+        end_date="20260526",
+        rate_limit_per_minute=0,
+    )
+    assert first.failed == {}
+
+    recent = ingest_recent(settings, days=1)
+    assert recent.trade_dates == ["20260526"]
+
+    with duckdb.connect(str(settings.duckdb_path)) as con:
+        daily_dates = con.execute("SELECT trade_date FROM daily ORDER BY trade_date").fetchall()
+        adj_dates = con.execute("SELECT trade_date FROM adj_factor ORDER BY trade_date").fetchall()
+        basic_dates = con.execute("SELECT trade_date FROM daily_basic ORDER BY trade_date").fetchall()
+        limit_dates = con.execute("SELECT trade_date FROM stk_limit ORDER BY trade_date").fetchall()
+
+    expected = [("20260525",), ("20260526",)]
+    assert daily_dates == expected
+    assert adj_dates == expected
+    assert basic_dates == expected
+    assert limit_dates == expected

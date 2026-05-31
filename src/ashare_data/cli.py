@@ -50,7 +50,11 @@ def ingest_history_cmd(
     end_date: str | None = typer.Option(None, "--end-date", help="End date (YYYYMMDD)."),
     years: int | None = typer.Option(None, "--years", help="Rolling years when start-date is not provided."),
     force: bool = typer.Option(False, "--force", help="Re-fetch partitions even when already successful."),
-    rate_limit_per_minute: int = typer.Option(180, "--rate-limit-per-minute", help="API calls per minute."),
+    rate_limit_per_minute: int = typer.Option(
+        0,
+        "--rate-limit-per-minute",
+        help="Extra caller-side API calls per minute. 0 means rely on TushareClient rate limit.",
+    ),
     retries: int = typer.Option(2, "--retries", help="Retry attempts per request."),
 ) -> None:
     """Historical ingest with resume/skip and partitioned raw output."""

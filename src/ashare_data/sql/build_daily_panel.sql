@@ -89,8 +89,8 @@ LEFT JOIN industry_history ih
     ON d.ts_code = ih.ts_code
     AND d.trade_date >= ih.in_date
     AND (ih.out_date IS NULL OR ih.out_date = '' OR d.trade_date < ih.out_date)
-WHERE ({start_date} IS NULL OR d.trade_date >= {start_date})
-  AND ({end_date} IS NULL OR d.trade_date <= {end_date})
+WHERE (? IS NULL OR d.trade_date >= ?)
+  AND (? IS NULL OR d.trade_date <= ?)
 QUALIFY row_number() OVER (
     PARTITION BY d.trade_date, d.ts_code
     ORDER BY

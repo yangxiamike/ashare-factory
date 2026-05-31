@@ -12,11 +12,11 @@ def build_daily_panel(
     """Build daily_panel and return the row count for the affected range."""
     settings = settings.resolve_paths()
     _validate_range(start_date, end_date)
-    select_sql = _panel_select_sql(settings, start_date, end_date)
+    select_sql, select_params = _panel_select_sql(settings, start_date, end_date)
     with connect(settings) as con:
         if start_date or end_date:
             con.execute("DROP TABLE IF EXISTS _daily_panel_range")
-            con.execute(f"CREATE TEMP TABLE _daily_panel_range AS {select_sql}")
+            con.execute(f"CREATE TEMP TABLE _daily_panel_range AS {select_sql}", select_params)
             existing_columns = {
                 row[0]
                 for row in con.execute(
@@ -62,16 +62,15 @@ def build_daily_panel(
                 [start_date, start_date, end_date, end_date],
             ).fetchone()[0]
 
-        con.execute(f"CREATE OR REPLACE TABLE daily_panel AS {select_sql}")
+        con.execute(f"CREATE OR REPLACE TABLE daily_panel AS {select_sql}", select_params)
         return con.execute("SELECT COUNT(*) FROM daily_panel").fetchone()[0]
 
 
-def _panel_select_sql(settings: Settings, start_date: str | None, end_date: str | None) -> str:
+def _panel_select_sql(
+    settings: Settings, start_date: str | None, end_date: str | None
+) -> tuple[str, list[str | None]]:
     sql = (settings.sql_dir / "build_daily_panel.sql").read_text(encoding="utf-8")
-    return sql.format(
-        start_date=f"'{start_date}'" if start_date else "NULL",
-        end_date=f"'{end_date}'" if end_date else "NULL",
-    )
+    return sql, [start_date, start_date, end_date, end_date]
 
 
 def _validate_range(start_date: str | None, end_date: str | None) -> None:

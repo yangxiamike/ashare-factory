@@ -106,11 +106,12 @@ def ingest_recent(settings: Settings, days: int = 5) -> IngestResult:
     trade_cal, trade_dates = client.recent_trade_calendar(days=days)
     row_counts: dict[str, int] = {}
 
-    row_counts["trade_cal"] = _persist(settings, "trade_cal", trade_cal)
+    upsert_trade_cal_table(settings, trade_cal)
+    row_counts["trade_cal"] = len(trade_cal)
     row_counts["stock_basic"] = _persist(settings, "stock_basic", client.stock_basic())
 
-    for endpoint in ["daily", "adj_factor", "daily_basic", "suspend_d", "stk_limit"]:
-        row_counts[endpoint] = _persist(settings, endpoint, _concat_daily(client, endpoint, trade_dates))
+    for endpoint in DAILY_ENDPOINTS:
+        row_counts[endpoint] = _persist_recent_daily_endpoint(settings, client, endpoint, trade_dates)
 
     row_counts["index_classify"] = _persist(settings, "index_classify", client.index_classify())
     row_counts["index_member_all"] = _persist(settings, "index_member_all", client.index_member_all())
@@ -123,7 +124,7 @@ def ingest_history(
     start_date: str | None = None,
     end_date: str | None = None,
     years: int | None = None,
-    rate_limit_per_minute: int = 180,
+    rate_limit_per_minute: int = 0,
     force: bool = False,
     retries: int = 2,
 ) -> HistoryIngestResult:
@@ -329,3 +330,15 @@ def _call_with_retry(
             if attempt < retries:
                 sleep(2**attempt)
     raise RuntimeError(f"{endpoint} failed for {trade_date or 'ALL'}: {last_error}")
+
+
+def _persist_recent_daily_endpoint(
+    settings: Settings, client: TushareClient, endpoint: str, trade_dates: list[str]
+) -> int:
+    rows = 0
+    method = getattr(client, endpoint)
+    for trade_date in trade_dates:
+        frame = method(trade_date)
+        write_raw_partition(settings, endpoint, trade_date, frame)
+        rows += upsert_trade_date_table(settings, endpoint, trade_date, frame)
+    return rows

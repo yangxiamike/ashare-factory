@@ -10,15 +10,15 @@ import pandas as pd
 def load_daily_panel(duckdb_path, start_date="20220101"):
     """Load daily_panel from duckdb, return clean DataFrame."""
     con = duckdb.connect(str(duckdb_path), read_only=True)
-    sql = f"""
+    sql = """
     SELECT trade_date, ts_code, close, total_mv, is_suspended, sw_l1_name
     FROM daily_panel
-    WHERE trade_date >= '{start_date}'
+    WHERE trade_date >= ?
       AND close IS NOT NULL
       AND total_mv IS NOT NULL
     ORDER BY trade_date, ts_code
     """
-    df = con.execute(sql).fetchdf()
+    df = con.execute(sql, [start_date]).fetchdf()
     con.close()
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df["is_suspended"] = df["is_suspended"].fillna(False).astype(bool)
