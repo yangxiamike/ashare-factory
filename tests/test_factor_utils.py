@@ -3,13 +3,17 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
+import pytest
 
 from factor_utils import (
     build_factor,
     compute_ic_decay,
     compute_momentum,
     load_daily_panel,
+    long_short_spread,
+    ls_summary,
     neutralize_by_industry_and_size,
+    rebalance_cumulative_returns,
 )
 
 
@@ -199,3 +203,41 @@ def test_compute_ic_decay_summarizes_available_horizons() -> None:
     assert decay["horizon"].tolist() == [1, 2]
     assert decay.loc[decay["horizon"].eq(1), "mean_ic"].iloc[0] == 1.0
     assert decay.loc[decay["horizon"].eq(2), "mean_ic"].iloc[0] == -1.0
+
+
+def test_rebalance_cumulative_returns_only_compounds_rebalance_rows() -> None:
+    returns = pd.DataFrame(
+        {
+            1: [0.10, -0.20, 0.05, 0.03, -0.01, 0.10],
+            5: [0.20, -0.10, 0.04, 0.02, -0.03, 0.20],
+        },
+        index=pd.date_range("2024-01-01", periods=6),
+    )
+
+    cumulative = rebalance_cumulative_returns(returns, step=5)
+
+    expected = pd.DataFrame(
+        {
+            1: [0.10, 0.10, 0.10, 0.10, 0.10, 0.21],
+            5: [0.20, 0.20, 0.20, 0.20, 0.20, 0.44],
+        },
+        index=returns.index,
+    )
+    pd.testing.assert_frame_equal(cumulative, expected)
+
+
+def test_long_short_spread_and_summary_use_rebalance_compounding() -> None:
+    pivot = pd.DataFrame(
+        {
+            1: [0.00, 0.20, -0.10, 0.10, 0.00, 0.00],
+            5: [0.10, 0.00, 0.00, -0.10, 0.10, 0.10],
+        },
+        index=pd.date_range("2024-01-01", periods=6),
+    )
+
+    ls = long_short_spread(pivot, step=5)
+    summary = ls_summary(ls)
+
+    np.testing.assert_allclose(ls["cum_spread"], [0.10, 0.10, 0.10, 0.10, 0.10, 0.21])
+    assert summary["cum_return"] == pytest.approx(0.21)
+    assert summary["max_dd"] == pytest.approx(0.0)

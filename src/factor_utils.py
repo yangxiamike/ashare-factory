@@ -67,7 +67,11 @@ def compute_momentum(df, window=20, col_name="mom", dropna=True):
 
 
 def compute_forward_returns(df, horizons=(1, 5, 20)):
-    """Compute forward returns for given horizons."""
+    """Compute forward returns avoiding same-day look-ahead.
+
+    fwd_{h}d = adj_close[t+h+1] / adj_close[t+1] - 1, i.e. the h-day return
+    starting from the next trading day after the factor observation.
+    """
     df = df.copy()
     for h in horizons:
         df[f"fwd_{h}d"] = df.groupby("ts_code")["adj_close"].transform(
@@ -271,7 +275,15 @@ def compute_quantile_returns(df, forward_col):
     return summary, daily, pivot
 
 
-def long_short_spread(pivot):
+def rebalance_cumulative_returns(returns, step=5):
+    """Compound overlapping forward returns only on rebalance observations."""
+    assert step >= 1
+    sampled = returns.fillna(0).iloc[::step]
+    cumulative = (1 + sampled).cumprod() - 1
+    return cumulative.reindex(returns.index).ffill()
+
+
+def long_short_spread(pivot, step=5):
     """Compute Q5-Q1 long-short spread from quantile pivot."""
     ls = pd.DataFrame(
         {
@@ -279,20 +291,20 @@ def long_short_spread(pivot):
             "spread": pivot.get(5, 0) - pivot.get(1, 0),
         }
     )
-    ls["cum_spread"] = (1 + ls["spread"].fillna(0)).cumprod() - 1
+    ls["cum_spread"] = rebalance_cumulative_returns(ls["spread"], step=step).to_numpy()
     return ls
 
 
 def ls_summary(ls):
     """Summarize long-short performance."""
     s = ls["spread"].dropna()
-    cum = (1 + s).cumprod()
-    dd = cum / cum.cummax() - 1
+    equity = 1 + ls["cum_spread"].fillna(0)
+    dd = equity / equity.cummax() - 1
     return {
         "mean": s.mean(),
         "std": s.std(ddof=0),
         "win_rate": (s > 0).mean(),
-        "cum_return": cum.iloc[-1] - 1,
+        "cum_return": ls["cum_spread"].iloc[-1],
         "max_dd": dd.min(),
     }
 
