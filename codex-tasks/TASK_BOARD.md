@@ -11,7 +11,7 @@
 | 已解决 | 单因子 MVP 数据和逻辑修复 | [tasks/2026-06-01-factor-data-fixes.md](tasks/2026-06-01-factor-data-fixes.md) | `080c025` / `17f436f` | 复权口径切到 adj_close，IPO 过滤放在 notebook 样本口径层，评分卡补成支持反向单调 |
 | 已解决 | 01 notebook 改进点 | [tasks/2026-06-01-notebook-01-issues.md](tasks/2026-06-01-notebook-01-issues.md) | `5447159` | 4 个 issue 已全部落地，并统一成可复用的 notebook 因子研究管线 |
 | 已解决 | 累积收益重叠复利 bug | [tasks/2026-06-01-cumulative-return-bug.md](tasks/2026-06-01-cumulative-return-bug.md) | `f6a9644` | 统一改为按 5 日调仓步长累计，并同步修正 notebook 图表、回撤和记分卡口径 |
-| 待处理 | 新建 factor_eval 评估引擎 + 02 notebook | [tasks/2026-06-01-factor-eval-engine.md](tasks/2026-06-01-factor-eval-engine.md) | - | - |
+| 已解决 | 新建 factor_eval 评估引擎 + 02 notebook | [tasks/2026-06-01-factor-eval-engine.md](tasks/2026-06-01-factor-eval-engine.md) | `a29d791` | 按原规格抽出 `factor_eval` 引擎和标准图表，02 notebook 使用 PIT forward-fill 指数成分股口径跑四个 universe 对比 |
 
 ## 使用规则
 

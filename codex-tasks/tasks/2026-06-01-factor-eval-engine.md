@@ -32,3 +32,7 @@
 2. 四个 universe 分别跑通，IC 值和 01 notebook 一致
 3. 6 张图正常显示
 4. 02 notebook 从头到尾顺序执行不出错
+
+## Codex 最终方案
+
+与原建议一致：新增 `src/factor_eval/` 引擎、标准图表函数和 `notebooks/02_single_factor_eval.ipynb`，四个 universe 均使用 `index_weight` 最近一次调仓日成分股做 PIT forward-fill 过滤。额外把 `statsmodels` 补进项目依赖声明，因为现有 `factor_utils.py` 顶层运行时已依赖它。
