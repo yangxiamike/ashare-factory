@@ -6,10 +6,10 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
 from factor_eval.runner import EvalResult
 from factor_utils import rebalance_cumulative_returns
-
 
 COLORS = {
     "blue": "#4E79A7",
@@ -132,19 +132,30 @@ def plot_ic_decay(result: EvalResult) -> plt.Figure:
 def plot_quantile_returns(result: EvalResult) -> plt.Figure:
     q_summary = result.quantile_summary.set_index("quantile")
     q_pivot = result.quantile_returns_daily.pivot(
-        index="trade_date",
-        columns="quantile",
-        values="avg_return",
+        index="trade_date", columns="quantile", values="avg_return"
     ).sort_index()
     q_cum = rebalance_cumulative_returns(q_pivot, step=5)
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     ax = axes[0]
-    bars = ax.bar(q_summary.index.astype(str), q_summary["mean_return"], color=QUANTILE_5, edgecolor="white", linewidth=0.8)
+    bars = ax.bar(
+        q_summary.index.astype(str),
+        q_summary["mean_return"],
+        color=QUANTILE_5,
+        edgecolor="white",
+        linewidth=0.8,
+    )
     for bar, val in zip(bars, q_summary["mean_return"]):
         offset = 0.0002 if val >= 0 else -0.0002
         va = "bottom" if val >= 0 else "top"
-        ax.text(bar.get_x() + bar.get_width() / 2, val + offset, f"{val:.4%}", ha="center", va=va, fontsize=9)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            val + offset,
+            f"{val:.4%}",
+            ha="center",
+            va=va,
+            fontsize=9,
+        )
     ax.axhline(0, color=COLORS["gray"], linestyle="--", linewidth=0.8)
     ax.set_title("Mean fwd_5d Return by Quantile")
     ax.set_xlabel("Quantile (1=Low, 5=High)")
@@ -165,7 +176,11 @@ def plot_quantile_returns(result: EvalResult) -> plt.Figure:
     ax.legend(ncol=5, fontsize=8, frameon=True)
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
 
-    fig.suptitle(f"Quantile Returns — {result.factor_name} ({result.universe})", fontweight="bold", y=1.02)
+    fig.suptitle(
+        f"Quantile Returns — {result.factor_name} ({result.universe})",
+        fontweight="bold",
+        y=1.02,
+    )
     fig.tight_layout()
     return fig
 
@@ -188,7 +203,11 @@ def plot_long_short(result: EvalResult) -> plt.Figure:
     ax.set_title(f"Cumulative Spread\nfinal={result.long_short_summary['cum_return']:.4%}")
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
 
-    fig.suptitle(f"Long-Short (Q5-Q1) — {result.factor_name} ({result.universe})", fontweight="bold", y=1.02)
+    fig.suptitle(
+        f"Long-Short (Q5-Q1) — {result.factor_name} ({result.universe})",
+        fontweight="bold",
+        y=1.02,
+    )
     fig.tight_layout()
     return fig
 
@@ -206,12 +225,140 @@ def plot_yearly_perf(result: EvalResult) -> plt.Figure:
     axes[1].set_title("Q5 Cumulative Return by Year")
     axes[1].yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
 
-    axes[2].plot(yearly["year"].astype(str), yearly["win_rate"], color=COLORS["orange"], marker="o", linewidth=2)
+    axes[2].plot(
+        yearly["year"].astype(str), yearly["win_rate"], color=COLORS["orange"], marker="o", linewidth=2
+    )
     axes[2].axhline(0.5, color=COLORS["gray"], linestyle="--", linewidth=0.8)
     axes[2].set_title("IC Win Rate by Year")
     axes[2].yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
 
-    fig.suptitle(f"Yearly Performance — {result.factor_name} ({result.universe})", fontweight="bold", y=1.02)
+    fig.suptitle(
+        f"Yearly Performance — {result.factor_name} ({result.universe})",
+        fontweight="bold",
+        y=1.02,
+    )
+    fig.tight_layout()
+    return fig
+
+
+def plot_monthly_ic_heatmap(result: EvalResult) -> plt.Figure:
+    """Monthly mean IC heatmap — reveals seasonal IC patterns."""
+    monthly_ic = result.monthly_ic
+    fig, ax = plt.subplots(figsize=(12, max(3, len(monthly_ic) * 0.6)))
+    sns.heatmap(
+        monthly_ic,
+        annot=True,
+        fmt=".3f",
+        cmap="RdBu_r",
+        center=0,
+        linewidths=0.5,
+        ax=ax,
+        cbar_kws={"label": "Mean Rank IC"},
+        xticklabels=[f"{m}月" for m in monthly_ic.columns],
+    )
+    ax.set_title(
+        f"Monthly IC Heatmap — {result.factor_name} ({result.universe})",
+        fontweight="bold",
+    )
+    ax.set_xlabel("Month")
+    ax.set_ylabel("Year")
+    fig.tight_layout()
+    return fig
+
+
+def plot_regression_test(result: EvalResult) -> plt.Figure:
+    """Plot regression-based factor return and t-value diagnostics.
+
+    Uses factor_utils.compute_factor_return_t internally to get per-period
+    factor return and t-value, then plots them alongside a t-value histogram.
+    """
+    from factor_utils import compute_factor_return_t
+
+    research_sample = result.df[result.df["universe"]]
+    reg_df, _ = compute_factor_return_t(
+        research_sample, result.factor_col, "fwd_5d"
+    )
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 4))
+
+    ax = axes[0]
+    ax.bar(
+        reg_df["trade_date"],
+        reg_df["factor_return"],
+        color=[COLORS["green"] if v >= 0 else COLORS["red"] for v in reg_df["factor_return"]],
+        alpha=0.6,
+        width=1.5,
+    )
+    ax.axhline(0, color=COLORS["gray"], linestyle="--", linewidth=0.8)
+    ax.set_title(f"Factor Return (OLS beta)\nmean={reg_df['factor_return'].mean():.5f}")
+
+    ax = axes[1]
+    ax.bar(reg_df["trade_date"], reg_df["t_value"], color=COLORS["blue"], alpha=0.55, width=1.5)
+    ax.axhline(2, color=COLORS["orange"], linestyle="--", linewidth=1, label="|t|=2")
+    ax.axhline(-2, color=COLORS["orange"], linestyle="--", linewidth=1)
+    ax.axhline(0, color=COLORS["gray"], linestyle="--", linewidth=0.8)
+    mean_abs_t = reg_df["t_value"].abs().mean()
+    pct_gt_2 = (reg_df["t_value"].abs() > 2).mean()
+    ax.set_title(f"t-Value per Period\nmean|t|={mean_abs_t:.2f}  |t|>2={pct_gt_2:.1%}")
+    ax.legend(fontsize=8)
+
+    ax = axes[2]
+    ax.hist(reg_df["t_value"], bins=25, color=COLORS["blue"], alpha=0.78, edgecolor="white")
+    ax.axvline(0, color=COLORS["gray"], linestyle="--", linewidth=1)
+    ax.axvline(
+        reg_df["t_value"].mean(),
+        color=COLORS["orange"],
+        linewidth=2,
+        label=f"mean t={reg_df['t_value'].mean():.2f}",
+    )
+    ax.set_title("t-Value Distribution")
+    ax.legend()
+
+    fig.suptitle(
+        f"Regression-Based Factor Test — {result.factor_name} ({result.universe})",
+        fontweight="bold",
+        y=1.02,
+    )
+    fig.tight_layout()
+    return fig
+
+
+def plot_backtest(result: EvalResult) -> plt.Figure:
+    """Plot Q5 long-only backtest: equity curve + drawdown."""
+    bt = result.backtest_df
+    if bt.empty:
+        fig, ax = plt.subplots(figsize=(8, 2))
+        ax.text(0.5, 0.5, "No backtest data", ha="center", va="center")
+        return fig
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 4.5))
+
+    ax = axes[0]
+    ax.plot(bt["trade_date"], bt["gross_equity"], color=COLORS["blue"], linewidth=1.8, label="Gross")
+    ax.plot(bt["trade_date"], bt["net_equity"], color=COLORS["green"], linewidth=2.0, label="Net")
+    ax.axhline(1.0, color=COLORS["gray"], linestyle="--", linewidth=0.8)
+    ax.set_title("Q5 Backtest Equity")
+    ax.legend(frameon=True)
+
+    ax = axes[1]
+    ax.fill_between(bt["trade_date"], bt["drawdown"], 0, color=COLORS["red"], alpha=0.18)
+    ax.plot(bt["trade_date"], bt["drawdown"], color=COLORS["red"], linewidth=1.6)
+    ax.set_title(f"Drawdown (max={bt['drawdown'].min():.2%})")
+    ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
+
+    ax = axes[2]
+    ax.bar(bt["trade_date"], bt["turnover"], color=COLORS["purple"], alpha=0.6, width=2)
+    ax.axhline(bt["turnover"].mean(), color=COLORS["orange"], linestyle="--",
+               label=f"mean={bt['turnover'].mean():.1%}")
+    ax.set_title("Turnover per Rebalance")
+    ax.legend(fontsize=8)
+    ax.yaxis.set_major_formatter(mticker.PercentFormatter(1.0))
+
+    fig.suptitle(
+        f"Research Backtest (Q5 Long-Only) — {result.factor_name} ({result.universe})",
+        fontweight="bold",
+        y=1.02,
+    )
     fig.tight_layout()
     return fig
 
@@ -241,7 +388,10 @@ def plot_scorecard(result: EvalResult) -> pd.io.formats.style.Styler:
                         ("border-color", "#374151"),
                     ],
                 },
-                {"selector": "td", "props": [("font-weight", "500"), ("border-color", "#E5E7EB")]},
+                {
+                    "selector": "td",
+                    "props": [("font-weight", "500"), ("border-color", "#E5E7EB")],
+                },
             ]
         )
         .hide(axis="index")
