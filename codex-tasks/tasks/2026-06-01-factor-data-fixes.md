@@ -122,3 +122,11 @@ fix: adj_close, IPO filter, and monotonicity check in factor pipeline
 ```
 
 把 `src/factor_utils.py` 和 `notebooks/01_single_factor_mvp.ipynb` 放在一个 commit 里。
+
+## Codex 最终方案
+
+与原建议不完全一致。
+
+- `080c025` 先把 `load_daily_panel`、`compute_momentum`、`compute_forward_returns` 全部切到 `adj_close`，并补了对应测试。
+- `17f436f` 再把 notebook 侧样本口径补成 `listed_trade_days >= FACTOR_WINDOW + max(FORWARD_HORIZONS) + 1`，同时让评分卡支持“反向单调”。
+- IPO 过滤最终没有下沉到 `load_daily_panel`，而是保留在 notebook 的研究样本层。原因是这个阈值依赖具体 factor window 和 forward horizon，放在研究层更准确，也避免把通用数据加载函数绑死在单一 notebook 参数上。

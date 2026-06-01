@@ -29,3 +29,12 @@ SQL 文件如有其他 `{}` 会炸，改用 `:param` 或更安全的占位符。
 ### 9. `_migrate_warehouse_schema` DDL 用 f-string 拼标识符
 ### 10. `create_tables.sql` 无 PRIMARY KEY / UNIQUE 约束
 ### 11. `EXPECTED_COLUMNS` 和 `TEXT_COLUMNS` 高度重叠，维护两套 schema 定义
+
+## Codex 最终方案
+
+与原建议不完全一致。
+
+- `61e0840`：修复 `load_daily_panel` 参数化查询，`ingest_recent` 改成逐交易日 upsert，外层 history limiter 默认关闭，避免和 client 内部 limiter 双重限流。
+- `f67090f`：补齐 `build_daily_panel` 增量 schema 对齐，以及 `ingest_history` 的 `row_counts / skipped / failed` 统一口径。
+- `40cb9d0`：再把 schema 常量重复定义收敛掉，完成 `EXPECTED_COLUMNS / TEXT_COLUMNS` 的单点维护。
+- 低优先级里的 `__init__.py` API 暴露、DDL 标识符拼接、主键/唯一约束等未纳入本轮，因为不阻塞 DuckDB 入库主链路和 notebook 研究。

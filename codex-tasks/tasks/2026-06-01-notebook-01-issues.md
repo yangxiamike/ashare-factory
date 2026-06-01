@@ -155,3 +155,10 @@ net_return = gross_return - 2 * turnover * one_way_cost  # 双边
 ---
 
 *来源：Claude Code review，2026-06-01*
+
+## Codex 最终方案
+
+与原建议不完全一致。
+
+- `5447159` 已把 4 个 issue 主体全部落地：notebook 复用 `factor_utils`、主因子切到行业+市值联合中性化、补上 IC decay，并把轻量回测改成双边成本 + 等权/市值加权 + 涨停过滤。
+- 后续 `4510f45` 又额外补了 Step 1.5 / Step 2.5 的 5 项补充检验，这是超出原任务单范围的增强，不影响本任务已完成的判断。

@@ -85,3 +85,7 @@ CASE WHEN ? IS NULL THEN current_timestamp ELSE CAST(? AS TIMESTAMP) END
 ```
 refactor: remove defensive redundancy and dead code
 ```
+
+## Codex 最终方案
+
+与原建议一致。
