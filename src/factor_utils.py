@@ -3,6 +3,7 @@
 import duckdb
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 
 
 DAILY_PANEL_REQUIRED_COLUMNS = [
@@ -331,3 +332,207 @@ def factor_autocorr(df, factor_col):
             }
         )
     return pd.DataFrame(rows)
+
+
+# ── 回归法因子检验 ──
+
+
+def compute_factor_return_t(df, factor_col, forward_col, min_stocks=10):
+    """Cross-sectional regression: fwd_return ~ factor, returns factor return + t-value per period.
+
+    Returns
+    -------
+    result_df : DataFrame with trade_date, factor_return, t_value, n_stocks
+    summary : dict with mean_abs_t, pct_t_gt_2, mean_return, return_t, ic_ir_equivalent
+    """
+    dates = sorted(df["trade_date"].unique())
+    rows = []
+    for dt in dates:
+        g = df[df["trade_date"] == dt][[factor_col, forward_col]].dropna()
+        if len(g) < min_stocks:
+            continue
+        X = sm.add_constant(g[factor_col].values)
+        y = g[forward_col].values
+        try:
+            result = sm.OLS(y, X).fit()
+            beta = result.params[1]
+            tval = result.tvalues[1]
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        rows.append({
+            "trade_date": dt,
+            "factor_return": beta,
+            "t_value": tval,
+            "n_stocks": len(g),
+        })
+    result_df = pd.DataFrame(rows).sort_values("trade_date").reset_index(drop=True)
+    t = result_df["t_value"].dropna()
+    ret = result_df["factor_return"].dropna()
+    mean_abs_t = t.abs().mean()
+    pct_t_gt_2 = (t.abs() > 2).mean()
+    mean_return = ret.mean()
+    return_t = mean_return / ret.std(ddof=0) * np.sqrt(len(ret)) if ret.std(ddof=0) > 0 else np.nan
+    summary = {
+        "method": "Regression (OLS per cross-section)",
+        "factor_col": factor_col,
+        "forward_col": forward_col,
+        "n_periods": len(result_df),
+        "mean_factor_return": mean_return,
+        "return_t_stat": return_t,
+        "mean_abs_t": mean_abs_t,
+        "pct_abs_t_gt_2": pct_t_gt_2,
+    }
+    return result_df, summary
+
+
+# ── IC 半衰期 ──
+
+
+def ic_half_life(decay_df):
+    """Compute IC half-life: number of periods until |mean_ic| drops to half of horizon=1 value.
+
+    Parameters
+    ----------
+    decay_df : DataFrame from compute_ic_decay with columns horizon, mean_ic
+
+    Returns
+    -------
+    half_life : int or None (None if never decays to half)
+    """
+    if decay_df.empty or decay_df["mean_ic"].iloc[0] == 0:
+        return None
+    initial = abs(decay_df["mean_ic"].iloc[0])
+    target = initial / 2
+    for _, row in decay_df.iterrows():
+        if abs(row["mean_ic"]) < target:
+            return int(row["horizon"])
+    return None
+
+
+# ── 因子行业暴露 ──
+
+
+def factor_industry_exposure(df, factor_col, industry_col="sw_l1_name"):
+    """Compute mean and standardized factor exposure per industry (before neutralization).
+
+    Returns DataFrame with columns: industry, mean_exposure, std_exposure, n_stocks, normalized_exposure
+    normalized_exposure = mean / std, reflects concentration.
+    """
+    valid = df[[factor_col, industry_col]].dropna()
+    g = valid.groupby(industry_col)
+    result = pd.DataFrame({
+        "industry": g[factor_col].mean().index,
+        "mean_exposure": g[factor_col].mean().values,
+        "std_exposure": g[factor_col].std(ddof=0).values,
+        "n_stocks": g.size().values,
+    })
+    std = result["std_exposure"]
+    result["normalized_exposure"] = np.where(std > 0, result["mean_exposure"] / std, 0.0)
+    return result.sort_values("mean_exposure", ascending=False).reset_index(drop=True)
+
+
+# ── 分宽基 IC ──
+
+
+_INDEX_MAP = {
+    "hs300": "000300.SH",
+    "csi500": "000905.SH",
+    "csi1000": "000852.SH",
+    "sse50": "000016.SH",
+    "star50": "000688.SH",
+    "chinext": "399006.SZ",
+}
+
+
+def _load_index_members(duckdb_path, index_code, start_date="20220101"):
+    """Load index constituent membership from DuckDB for a given index code."""
+    con = duckdb.connect(str(duckdb_path), read_only=True)
+    sql = """
+    SELECT trade_date, con_code AS ts_code
+    FROM index_weight
+    WHERE index_code = ? AND trade_date >= ?
+    """
+    df = con.execute(sql, [index_code, start_date]).fetchdf()
+    con.close()
+    df["trade_date"] = pd.to_datetime(df["trade_date"])
+    return df
+
+
+def ic_by_index(df, factor_col, forward_col, duckdb_path, indices=("hs300", "csi500", "csi1000"), start_date="20220101"):
+    """Compute Rank IC within each specified broad-market index universe.
+
+    Parameters
+    ----------
+    df : DataFrame with trade_date, ts_code, factor_col, forward_col
+    duckdb_path : path to DuckDB with index_weight table
+    indices : iterable of index short names ("hs300", "csi500", "csi1000", "sse50", "star50", "chinext")
+
+    Returns
+    -------
+    dict[str, dict] : {index_name: {"mean_ic": ..., "ic_ir": ..., "win_rate": ..., "n_days": ...}}
+    """
+    results = {}
+    for name in indices:
+        index_code = _INDEX_MAP.get(name)
+        if index_code is None:
+            continue
+        members = _load_index_members(duckdb_path, index_code, start_date=start_date)
+        # Merge: keep only stock-date pairs that are in the index
+        merged = df.merge(members, on=["trade_date", "ts_code"], how="inner")
+        if merged.empty:
+            results[name] = {"mean_ic": np.nan, "ic_ir": np.nan, "win_rate": np.nan, "n_days": 0}
+            continue
+        ic_df = compute_rank_ic(merged, factor_col, forward_col)
+        ic = ic_df["rank_ic"].dropna()
+        std_ic = ic.std(ddof=0)
+        results[name] = {
+            "mean_ic": ic.mean(),
+            "std_ic": std_ic,
+            "ic_ir": ic.mean() / std_ic if std_ic > 0 else np.nan,
+            "win_rate": (ic > 0).mean(),
+            "n_days": len(ic),
+        }
+    return results
+
+
+# ── 月度 IC 热力图 ──
+
+
+def monthly_ic_heatmap(ic_df):
+    """Pivot daily IC into year × month matrix for heatmap.
+
+    Returns DataFrame with index=year, columns=1..12, values=mean IC for that month.
+    """
+    df = ic_df.copy()
+    df["year"] = df["trade_date"].dt.year
+    df["month"] = df["trade_date"].dt.month
+    return df.pivot_table(index="year", columns="month", values="rank_ic", aggfunc="mean")
+
+
+# ── 多期因子自相关 ──
+
+
+def factor_autocorr_multi_lag(df, factor_col, max_lag=5):
+    """Compute factor rank autocorrelation at lags 1..max_lag.
+
+    Returns DataFrame with columns: lag, mean_autocorr.
+    """
+    dates = sorted(df["trade_date"].unique())
+    lag_results = []
+    for lag in range(1, max_lag + 1):
+        rows = []
+        for i in range(lag, len(dates)):
+            d_prev = dates[i - lag]
+            d_curr = dates[i]
+            prev = df[df["trade_date"] == d_prev][["ts_code", factor_col]].rename(
+                columns={factor_col: "f_prev"}
+            )
+            curr = df[df["trade_date"] == d_curr][["ts_code", factor_col]].rename(
+                columns={factor_col: "f_curr"}
+            )
+            m = prev.merge(curr, on="ts_code")
+            if len(m) < 10:
+                continue
+            rows.append(m["f_prev"].rank().corr(m["f_curr"].rank()))
+        lag_results.append({"lag": lag, "mean_autocorr": np.mean(rows) if rows else np.nan})
+    return pd.DataFrame(lag_results)
