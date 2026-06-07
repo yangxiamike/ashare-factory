@@ -12,7 +12,7 @@
 | 已解决 | 01 notebook 改进点 | [tasks/2026-06-01-notebook-01-issues.md](tasks/2026-06-01-notebook-01-issues.md) | `5447159` | 4 个 issue 已全部落地，并统一成可复用的 notebook 因子研究管线 |
 | 已解决 | 累积收益重叠复利 bug | [tasks/2026-06-01-cumulative-return-bug.md](tasks/2026-06-01-cumulative-return-bug.md) | `f6a9644` | 统一改为按 5 日调仓步长累计，并同步修正 notebook 图表、回撤和记分卡口径 |
 | 已解决 | 新建 factor_eval 评估引擎 + 02 notebook | [tasks/2026-06-01-factor-eval-engine.md](tasks/2026-06-01-factor-eval-engine.md) | `a29d791` | 按原规格抽出 `factor_eval` 引擎和标准图表，02 notebook 使用 PIT forward-fill 指数成分股口径跑四个 universe 对比 |
-| 已解决 | 因子工厂 v1 方案文档 review 改进 | [tasks/2026-06-07-factor-factory-plan-review.md](tasks/2026-06-07-factor-factory-plan-review.md) | 本次提交 | 按 review 建议补齐方案文档，并新增 `configs/evaluation.yaml` gate 与评价参数模板。 |
+| 已解决 | 因子工厂 v1 方案文档 review 改进 | [tasks/2026-06-07-factor-factory-plan-review.md](tasks/2026-06-07-factor-factory-plan-review.md) | `9b1e305` | 按 review 建议补齐方案文档，并新增 `configs/evaluation.yaml` gate 与评价参数模板。 |
 
 ## 使用规则
 
