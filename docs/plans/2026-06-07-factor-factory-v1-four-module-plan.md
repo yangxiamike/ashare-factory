@@ -1,5 +1,17 @@
 # 因子工厂 v1 四模块工程方案
 
+## 本轮任务目的
+
+本轮任务是在已经完成的数据底座上，建设第一版 A 股日频因子工厂。项目已有 DuckDB / Parquet 本地数据仓库，也已经完成基础股票数据、复权数据、停复牌、涨跌停、行业分类、指数成分和 `daily_panel` 等准备工作。
+
+本阶段不重做数据底座，而是把已有研究原型沉淀成候选因子入库前的统一体检系统：
+
+```text
+候选因子注册 -> 候选因子计算 -> 候选因子评价 -> gate 判断 -> factor_library 状态
+```
+
+第一版只解决“候选因子能否被稳定、统一、可追踪地评价”这个问题。它不是完整交易回测系统，不是自动挖因子系统，不是组合优化系统，也不做前端 dashboard。
+
 ## Summary
 
 目标是在现有 A 股日频数据底座上，新增一条轻量因子工厂流水线：
@@ -11,6 +23,33 @@ data_prep -> sample_builder -> factor_research -> factor_evaluation
 四个高层模块是业务工作流边界，不再额外发明新的多层架构。`sample / factors / evaluation / library` 等目录只作为内部实现拆分，不代表新的架构层级。
 
 第一版定位是候选因子入库前的统一体检模块：能注册因子、构建研究样本、计算因子、评价因子、输出结果，并更新 `factor_library` 状态。它不是完整交易回测系统，也不做自动挖因子、组合优化或前端 dashboard。
+
+## 本轮最小闭环
+
+输入：
+
+- 已存在的 DuckDB 数据库。
+- 已构建好的 `daily_panel`。
+- 因子注册表 `configs/factor_registry.yaml`。
+- 研究样本配置 `configs/universe.yaml`。
+- 评价和 gate 配置 `configs/evaluation.yaml`。
+
+处理：
+
+- 从 `daily_panel` 读取日频股票数据。
+- 构建统一研究样本，包括股票池、可交易 mask、forward returns 和时间对齐规则。
+- 根据注册表计算 3 个 demo 因子。
+- 对因子值做去极值、标准化和可选中性化。
+- 计算 IC、RankIC、分层收益、Top 组收益、long-short spread、覆盖率和稳定性指标。
+- 根据 gate 规则给出 `active / watch / rejected` 状态。
+
+输出：
+
+- 标准化评价结果 `evaluation_result.json`。
+- Markdown 因子评价报告。
+- 因子库状态文件 `factor_library.json`。
+- 可复用的因子注册、计算、评价工程模块。
+- 可通过 CLI 运行的单因子评价流程。
 
 ## Four Modules
 
@@ -229,6 +268,20 @@ CLI 只负责串联四模块，不在 CLI 里写业务计算逻辑。
 8. 实现 CLI。
 9. 更新或保留薄 wrapper，让旧 notebook 不被立即破坏。
 10. 新增测试并跑通 `momentum_20d_v1` demo。
+
+## Acceptance Criteria
+
+- 可以从已有 DuckDB 读取 `daily_panel`，并检查关键字段是否存在。
+- 不破坏原有数据采集、入库、`build-panel` 和 DQ 流程。
+- 可以构建主板研究样本，生成可交易 mask 和 `fwd_1d / fwd_3d / fwd_5d / fwd_10d / fwd_20d`。
+- 可以读取 `factor_registry.yaml`，校验 `factor_id` 唯一和必填字段。
+- 至少跑通 `momentum_20d_v1 / reversal_5d_v1 / volatility_20d_v1` 三个 demo 因子。
+- 因子值可以输出标准长表，至少包含 `trade_date / ts_code / factor_id / factor_value_raw`。
+- 可以完成 winsorize、zscore 和可选市值中性化。
+- 可以计算 IC、RankIC、IC mean、IC std、IC IR、IC win rate、分层收益、Top 组收益、long-short spread 和 coverage。
+- 可以根据 `configs/evaluation.yaml` 的 gate 规则输出 `active / watch / rejected`，并给出 reasons。
+- 可以生成 `evaluation_result.json`、`factor_library.json` 和 Markdown 因子评价报告。
+- CLI 至少支持 `list-factors` 和 `evaluate-factor`。
 
 ## Test Plan
 
