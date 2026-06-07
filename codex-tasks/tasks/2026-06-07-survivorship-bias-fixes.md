@@ -105,8 +105,11 @@ df = df[~df["is_suspended"] & (df["total_mv"] > 0)].copy()
 ## Codex Final
 
 - Matched the plan in spirit.
-- Switched `stock_basic` to full-history fetch with `list_status=""`.
+- Switched `stock_basic` to an explicit `L / D / P` union because `list_status=""` still missed part of the delisted history in Tushare.
 - Added `list_date` to `daily_panel` and changed `listed_trade_days` to calendar-day distance from `list_date`.
 - Adjusted default thresholds from `60/20` to `84/28` to preserve roughly the same filtering strength after switching from trading days to calendar days.
 - Kept a single rule instead of adding a `ROW_NUMBER()` fallback because local `stock_basic.list_date` currently has no missing values.
+- Filtered out pre-listing rows when building `daily_panel`, so vendor-mapped legacy rows do not reintroduce OHLC and coverage false alarms.
+- Backfilled dates earlier than the first known SW history segment with that stock's earliest known industry record; for pre-2017 windows the DQ threshold is relaxed to `90%` because Tushare's SW history source itself is incomplete in those years.
+- Rebuilt the local warehouse and reran historical DQ for `20110101~20160530`; final result is `PASS 7 / WARN 0 / FAIL 0`.
 - Full `ashare_factor` CLI regression is still pending because the current `.venv` is missing `PyYAML`.
