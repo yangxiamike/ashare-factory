@@ -12,7 +12,7 @@
 | 已解决 | 01 notebook 改进点 | [tasks/2026-06-01-notebook-01-issues.md](tasks/2026-06-01-notebook-01-issues.md) | `5447159` | 4 个 issue 已全部落地，并统一成可复用的 notebook 因子研究管线 |
 | 已解决 | 累积收益重叠复利 bug | [tasks/2026-06-01-cumulative-return-bug.md](tasks/2026-06-01-cumulative-return-bug.md) | `f6a9644` | 统一改为按 5 日调仓步长累计，并同步修正 notebook 图表、回撤和记分卡口径 |
 | 已解决 | 新建 factor_eval 评估引擎 + 02 notebook | [tasks/2026-06-01-factor-eval-engine.md](tasks/2026-06-01-factor-eval-engine.md) | `a29d791` | 按原规格抽出 `factor_eval` 引擎和标准图表，02 notebook 使用 PIT forward-fill 指数成分股口径跑四个 universe 对比 |
-| 已解决 | 因子工厂 v1 方案文档 review 改进 | [tasks/2026-06-07-factor-factory-plan-review.md](tasks/2026-06-07-factor-factory-plan-review.md) | `9b1e305` / `377f612` | 二次修订 gate 口径：移除 hard/soft 固定打分裁决，改为可评价性、方向、分层、交易表现、baseline、OOS 和保守状态管理。 |
+| 已解决 | 因子工厂 v1 方案文档 review 改进 | [tasks/2026-06-07-factor-factory-plan-review.md](tasks/2026-06-07-factor-factory-plan-review.md) | `9b1e305` / `377f612` / `db77638` | 三次修订 gate 口径：不把 6 个分析视角做成 6 个 gate 模块，压缩为 Validity / Research Evidence / Library Decision 三层。 |
 
 ## 使用规则
 
