@@ -1,4 +1,9 @@
-"""Single-factor analysis utilities: data loading, factor construction, IC, returns."""
+"""Legacy single-factor utilities.
+
+New factor research and evaluation work should go through `ashare_factor`.
+This module remains only as a compatibility layer for older notebook and
+`factor_eval` entry points.
+"""
 
 import duckdb
 import numpy as np

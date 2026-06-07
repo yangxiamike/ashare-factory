@@ -1,4 +1,8 @@
-"""Standard report plots for factor evaluation results."""
+"""Legacy report plots for factor evaluation results.
+
+This module is kept for older notebook workflows while new work moves to
+`ashare_factor`.
+"""
 
 from __future__ import annotations
 

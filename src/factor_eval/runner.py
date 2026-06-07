@@ -1,4 +1,7 @@
-"""Reusable single-factor evaluation runner."""
+"""Legacy reusable single-factor evaluation runner.
+
+New factor research and evaluation flows should use `ashare_factor`.
+"""
 
 from __future__ import annotations
 

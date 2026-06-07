@@ -1,4 +1,4 @@
-"""Generate 02_single_factor_eval.ipynb."""
+"""Generate the legacy 02 single-factor evaluation notebook."""
 import json
 from pathlib import Path
 
