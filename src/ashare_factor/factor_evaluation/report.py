@@ -83,7 +83,6 @@ def _render_markdown(result: dict[str, Any]) -> str:
         "",
         "## Output Paths",
         "",
-        f"- JSON: `{result.get('output_paths', {}).get('evaluation_result_json', '')}`",
         f"- Report: `{result.get('output_paths', {}).get('report_markdown', '')}`",
         f"- Library: `{result.get('output_paths', {}).get('factor_library_json', '')}`",
         "",

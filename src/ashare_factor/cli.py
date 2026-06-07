@@ -11,7 +11,6 @@ import yaml
 
 from ashare_data.config import Settings
 from ashare_factor.data_access import get_daily_panel_columns
-from ashare_factor.factor_evaluation.metrics import sanitize_for_json
 from ashare_factor.models import EvaluationConfig, PreprocessConfig, SampleConfig
 from ashare_factor.sample_builder.universe import load_universe_config
 
@@ -199,10 +198,6 @@ def _default_library_path() -> Path:
     return _default_output_root() / "factor_library" / "factor_library.json"
 
 
-def _default_result_root() -> Path:
-    return _default_output_root() / "evaluation_results"
-
-
 def _emit_result_summary(
     factor_id: str,
     evaluation_result: Any,
@@ -232,14 +227,14 @@ def _run_factor_pipeline(
     universe_path: Path,
     evaluation_path: Path,
     duckdb_path: Path | None,
-    result_root: Path,
+    output_root: Path,
     report_root: Path,
     library_path: Path,
 ) -> tuple[Any, Any, Any, Any]:
     sample_config = _load_sample_config(universe_path, start_date=start_date, end_date=end_date)
     evaluation_config = _load_evaluation_config(
         evaluation_path,
-        output_root=result_root.parent,
+        output_root=output_root,
         report_root=report_root,
     )
     settings = Settings(duckdb_path=duckdb_path).resolve_paths()
@@ -280,23 +275,11 @@ def _run_factor_pipeline(
         registry_path=registry_path,
         universe_path=universe_path,
         evaluation_path=evaluation_path,
-        output_root=result_root.parent,
-        persist_json=False,
+        output_root=output_root,
     )
     report_output = _call_public("write_evaluation_report", eval_result=evaluation_result)
     library_output = _call_public("update_factor_library", eval_result=evaluation_result, library_path=library_path)
-    _write_result_json(evaluation_result)
     return evaluation_result, evaluation_result.get("gate_decision", {}), report_output, library_output
-
-
-def _write_result_json(evaluation_result: dict[str, Any]) -> Path:
-    path = Path(evaluation_result["output_paths"]["evaluation_result_json"])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(sanitize_for_json(evaluation_result), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return path
 
 
 def _load_sample_config(path: Path, *, start_date: str | None, end_date: str | None) -> SampleConfig:
@@ -399,10 +382,11 @@ def evaluate_factor_cmd(
         help="Path to evaluation.yaml.",
     ),
     duckdb_path: Path | None = typer.Option(None, "--duckdb-path", help="Path to DuckDB warehouse."),
-    result_root: Path = typer.Option(
-        _default_result_root(),
+    output_root: Path = typer.Option(
+        _default_output_root(),
+        "--output-root",
         "--result-root",
-        help="Directory for evaluation result JSON files.",
+        help="Root directory for factor-factory outputs. `--result-root` is kept as a legacy alias.",
     ),
     report_root: Path = typer.Option(
         _default_report_root(),
@@ -425,7 +409,7 @@ def evaluate_factor_cmd(
             universe_path=universe_path,
             evaluation_path=evaluation_path,
             duckdb_path=duckdb_path,
-            result_root=result_root,
+            output_root=output_root,
             report_root=report_root,
             library_path=library_path,
         )
@@ -446,10 +430,11 @@ def evaluate_all_cmd(
         help="Path to evaluation.yaml.",
     ),
     duckdb_path: Path | None = typer.Option(None, "--duckdb-path", help="Path to DuckDB warehouse."),
-    result_root: Path = typer.Option(
-        _default_result_root(),
+    output_root: Path = typer.Option(
+        _default_output_root(),
+        "--output-root",
         "--result-root",
-        help="Directory for evaluation result JSON files.",
+        help="Root directory for factor-factory outputs. `--result-root` is kept as a legacy alias.",
     ),
     report_root: Path = typer.Option(
         _default_report_root(),
@@ -481,7 +466,7 @@ def evaluate_all_cmd(
                 universe_path=universe_path,
                 evaluation_path=evaluation_path,
                 duckdb_path=duckdb_path,
-                result_root=result_root,
+                output_root=output_root,
                 report_root=report_root,
                 library_path=library_path,
             )
@@ -493,32 +478,33 @@ def evaluate_all_cmd(
 @app.command("show-result")
 def show_result_cmd(
     factor_id: str = typer.Option(..., "--factor-id", help="Factor identifier."),
-    result_root: Path = typer.Option(
-        _default_result_root(),
-        "--result-root",
-        help="Directory containing evaluation result JSON files.",
+    library_path: Path = typer.Option(
+        _default_library_path(),
+        "--library-path",
+        help="Path to factor_library.json.",
     ),
 ) -> None:
-    """Show the latest saved evaluation_result.json for a factor."""
+    """Show the latest saved factor summary for a factor."""
     try:
-        matches = sorted(result_root.glob(f"{factor_id}_*.json"))
-        if not matches:
-            raise RuntimeError(f"no saved evaluation result found for {factor_id} in {result_root}")
+        if not library_path.exists():
+            raise RuntimeError(f"factor library not found: {library_path}")
+        payload = json.loads(library_path.read_text(encoding="utf-8"))
+        entry = payload.get("factors", {}).get(factor_id)
+        if not entry:
+            raise RuntimeError(f"no saved factor summary found for {factor_id} in {library_path}")
 
-        target = matches[-1]
-        payload = json.loads(target.read_text(encoding="utf-8"))
-        typer.echo(f"Result file: {target}")
+        typer.echo(f"Library file: {library_path}")
 
-        status = payload.get("status") or _get_value(payload.get("gate_decision", {}), "status")
+        status = entry.get("status")
         if status:
             typer.echo(f"Gate status: {status}")
 
         summary_fields = ("mean_rank_ic", "ic_ir", "coverage_pct", "long_short_sharpe")
         for field in summary_fields:
-            if field in payload:
-                typer.echo(f"{field}: {payload[field]}")
+            if field in entry:
+                typer.echo(f"{field}: {entry[field]}")
 
-        reasons = payload.get("reasons") or _get_value(payload.get("gate_decision", {}), "reasons", [])
+        reasons = entry.get("reasons", [])
         if reasons:
             for reason in reasons:
                 typer.echo(f"- {reason}")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +30,6 @@ def evaluate_factor(
     baseline_evidence: dict[str, Any] | None = None,
     run_id: str | None = None,
     output_root: str | Path = "outputs",
-    persist_json: bool = False,
 ) -> dict[str, Any]:
     spec = to_plain_dict(factor_spec)
     config = to_plain_dict(evaluation_config)
@@ -127,9 +125,6 @@ def evaluate_factor(
     if duckdb_path:
         write_factor_values(duckdb_path, frame)
         write_evaluation_artifacts(duckdb_path, result)
-
-    if persist_json:
-        _write_evaluation_result_json(result, output_paths["evaluation_result_json"])
     return sanitize_for_json(result)
 
 
@@ -157,7 +152,6 @@ def _split_oos(frame: pd.DataFrame, *, gate_cfg: dict[str, Any]) -> tuple[pd.Dat
 
 def _build_output_paths(*, output_root: Path, factor_id: str, run_id: str) -> dict[str, Path]:
     return {
-        "evaluation_result_json": output_root / "evaluation_results" / f"{factor_id}_{run_id}.json",
         "factor_library_json": output_root / "factor_library" / "factor_library.json",
         "report_markdown": Path("reports") / "factor_evaluation" / f"{factor_id}_{run_id}.md",
     }
@@ -214,8 +208,3 @@ def _code_version(
         if path and Path(path).exists():
             hashes[name] = hashlib.md5(Path(path).read_bytes()).hexdigest()
     return {"git_commit": commit, "config_hashes": hashes}
-
-
-def _write_evaluation_result_json(result: dict[str, Any], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(sanitize_for_json(result), ensure_ascii=False, indent=2), encoding="utf-8")

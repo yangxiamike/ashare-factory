@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -105,11 +104,7 @@ def test_evaluate_factor_runs_pipeline(monkeypatch, tmp_path: Path) -> None:
             return {
                 "factor_id": "momentum_20d_v1",
                 "gate_decision": {"status": "watch", "reasons": ["insufficient OOS history"]},
-                "output_paths": {
-                    "evaluation_result_json": str(
-                        tmp_path / "outputs" / "evaluation_results" / "momentum.json"
-                    )
-                },
+                "output_paths": {},
             }
 
         def write_evaluation_report(**kwargs):
@@ -143,8 +138,8 @@ def test_evaluate_factor_runs_pipeline(monkeypatch, tmp_path: Path) -> None:
             "20240101",
             "--end-date",
             "20240131",
-            "--result-root",
-            str(tmp_path / "outputs" / "evaluation_results"),
+            "--output-root",
+            str(tmp_path / "outputs"),
             "--report-root",
             str(tmp_path / "reports" / "factor_evaluation"),
             "--library-path",
@@ -193,22 +188,11 @@ def test_evaluate_all_runs_every_factor(monkeypatch, tmp_path: Path) -> None:
     assert "==> f2" in result.stdout
 
 
-def test_show_result_reads_latest_json(tmp_path: Path) -> None:
-    result_root = tmp_path / "outputs" / "evaluation_results"
-    result_root.mkdir(parents=True)
-    older = result_root / "momentum_20d_v1_20240101.json"
-    newer = result_root / "momentum_20d_v1_20240102.json"
-    older.write_text(json.dumps({"status": "rejected"}), encoding="utf-8")
-    newer.write_text(
-        json.dumps(
-            {
-                "status": "watch",
-                "mean_rank_ic": 0.031,
-                "ic_ir": 0.48,
-                "coverage_pct": 0.82,
-                "reasons": ["OOS window still short"],
-            }
-        ),
+def test_show_result_reads_factor_library(tmp_path: Path) -> None:
+    library_path = tmp_path / "outputs" / "factor_library" / "factor_library.json"
+    library_path.parent.mkdir(parents=True)
+    library_path.write_text(
+        '{"factors":{"momentum_20d_v1":{"status":"watch","mean_rank_ic":0.031,"ic_ir":0.48,"coverage_pct":0.82,"reasons":["OOS window still short"]}}}',
         encoding="utf-8",
     )
 
@@ -218,13 +202,13 @@ def test_show_result_reads_latest_json(tmp_path: Path) -> None:
             "show-result",
             "--factor-id",
             "momentum_20d_v1",
-            "--result-root",
-            str(result_root),
+            "--library-path",
+            str(library_path),
         ],
     )
 
     assert result.exit_code == 0
-    assert f"Result file: {newer}" in result.stdout
+    assert f"Library file: {library_path}" in result.stdout
     assert "Gate status: watch" in result.stdout
     assert "mean_rank_ic: 0.031" in result.stdout
     assert "- OOS window still short" in result.stdout
