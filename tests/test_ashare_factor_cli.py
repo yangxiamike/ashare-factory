@@ -12,6 +12,17 @@ from ashare_factor.cli import app
 runner = CliRunner()
 
 
+def _patch_cli_settings(monkeypatch, tmp_path: Path) -> None:
+    class FakeSettings:
+        def __init__(self, duckdb_path: Path | None = None):
+            self.duckdb_path = duckdb_path or tmp_path / "missing.duckdb"
+
+        def resolve_paths(self):
+            return self
+
+    monkeypatch.setattr("ashare_factor.cli.Settings", FakeSettings)
+
+
 def test_list_factors_outputs_registry_entries(monkeypatch) -> None:
     def fake_resolve(name: str):
         assert name == "load_factor_registry"
@@ -30,7 +41,9 @@ def test_list_factors_outputs_registry_entries(monkeypatch) -> None:
     assert "reversal_5d_v1\tnegative\tcandidate" in result.stdout
 
 
-def test_validate_registry_success(monkeypatch) -> None:
+def test_validate_registry_success(monkeypatch, tmp_path: Path) -> None:
+    _patch_cli_settings(monkeypatch, tmp_path)
+
     def fake_resolve(name: str):
         mapping = {
             "load_factor_registry": lambda **_: [{"factor_id": "momentum_20d_v1"}],
@@ -46,7 +59,9 @@ def test_validate_registry_success(monkeypatch) -> None:
     assert "Registry valid:" in result.stdout
 
 
-def test_validate_registry_failure_is_friendly(monkeypatch) -> None:
+def test_validate_registry_failure_is_friendly(monkeypatch, tmp_path: Path) -> None:
+    _patch_cli_settings(monkeypatch, tmp_path)
+
     def fake_resolve(name: str):
         mapping = {
             "load_factor_registry": lambda **_: [{"factor_id": "broken_factor"}],
@@ -65,6 +80,7 @@ def test_validate_registry_failure_is_friendly(monkeypatch) -> None:
 
 
 def test_evaluate_factor_runs_pipeline(monkeypatch, tmp_path: Path) -> None:
+    _patch_cli_settings(monkeypatch, tmp_path)
     calls: list[str] = []
 
     def fake_resolve(name: str):
