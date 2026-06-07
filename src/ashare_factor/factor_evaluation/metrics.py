@@ -7,16 +7,122 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from factor_utils import (
-    assign_quantiles,
-    compute_quantile_returns,
-    compute_rank_ic,
-    factor_autocorr_multi_lag,
-    factor_industry_exposure,
-    long_short_spread,
-)
-
 TRADING_DAYS_PER_YEAR = 252
+
+
+def assign_quantiles(df: pd.DataFrame, factor_col: str, n_quantiles: int = 5) -> pd.DataFrame:
+    """Assign quantile groups (1..n_quantiles) per date."""
+    result = df.copy()
+    result["quantile"] = pd.NA
+    for _, group in result.groupby("trade_date"):
+        mask = group[factor_col].notna()
+        if mask.sum() < n_quantiles:
+            continue
+        result.loc[group.index[mask], "quantile"] = pd.qcut(
+            group.loc[mask, factor_col].rank(method="first"),
+            q=n_quantiles,
+            labels=list(range(1, n_quantiles + 1)),
+        ).astype(int)
+    result["quantile"] = result["quantile"].astype("Int64")
+    return result
+
+
+def compute_rank_ic(df: pd.DataFrame, factor_col: str, forward_col: str) -> pd.DataFrame:
+    """Compute daily rank IC between factor and forward return."""
+    records: list[dict[str, Any]] = []
+    for trade_date, group in df.groupby("trade_date"):
+        valid = group[[factor_col, forward_col]].dropna()
+        if len(valid) < 10:
+            continue
+        records.append(
+            {
+                "trade_date": trade_date,
+                "rank_ic": valid[factor_col].rank().corr(valid[forward_col].rank()),
+                "n_stocks": len(valid),
+            }
+        )
+    columns = ["trade_date", "rank_ic", "n_stocks"]
+    return pd.DataFrame(records, columns=columns).sort_values("trade_date").reset_index(drop=True)
+
+
+def compute_quantile_returns(df: pd.DataFrame, forward_col: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Compute mean forward return by quantile per date."""
+    daily = (
+        df.dropna(subset=["quantile", forward_col])
+        .groupby(["trade_date", "quantile"])[forward_col]
+        .mean()
+        .reset_index()
+        .rename(columns={forward_col: "avg_return"})
+    )
+    summary = (
+        daily.groupby("quantile")["avg_return"]
+        .agg(["mean", "std", "count"])
+        .rename(columns={"mean": "mean_return", "std": "std_return"})
+        .reset_index()
+    )
+    summary["hit_rate"] = daily.groupby("quantile")["avg_return"].apply(lambda s: (s > 0).mean()).values
+    pivot = daily.pivot(index="trade_date", columns="quantile", values="avg_return").sort_index()
+    return summary, daily, pivot
+
+
+def _rebalance_cumulative_returns(returns: pd.Series, *, step: int = 5) -> pd.Series:
+    """Compound overlapping forward returns only on rebalance observations."""
+    assert step >= 1
+    sampled = returns.fillna(0).iloc[::step]
+    cumulative = (1 + sampled).cumprod() - 1
+    return cumulative.reindex(returns.index).ffill()
+
+
+def long_short_spread(pivot: pd.DataFrame, step: int = 5) -> pd.DataFrame:
+    """Compute Q5-Q1 long-short spread from quantile pivot."""
+    result = pd.DataFrame(
+        {
+            "trade_date": pivot.index,
+            "spread": pivot.get(5, 0) - pivot.get(1, 0),
+        }
+    )
+    result["cum_spread"] = _rebalance_cumulative_returns(result["spread"], step=step).to_numpy()
+    return result
+
+
+def factor_autocorr_multi_lag(df: pd.DataFrame, factor_col: str, max_lag: int = 5) -> pd.DataFrame:
+    """Compute factor rank autocorrelation at lags 1..max_lag."""
+    dates = sorted(df["trade_date"].unique())
+    lag_results: list[dict[str, Any]] = []
+    for lag in range(1, max_lag + 1):
+        values: list[float] = []
+        for index in range(lag, len(dates)):
+            prev_date = dates[index - lag]
+            curr_date = dates[index]
+            prev = df.loc[df["trade_date"].eq(prev_date), ["ts_code", factor_col]].rename(columns={factor_col: "f_prev"})
+            curr = df.loc[df["trade_date"].eq(curr_date), ["ts_code", factor_col]].rename(columns={factor_col: "f_curr"})
+            merged = prev.merge(curr, on="ts_code")
+            if len(merged) < 10:
+                continue
+            values.append(merged["f_prev"].rank().corr(merged["f_curr"].rank()))
+        lag_results.append({"lag": lag, "mean_autocorr": np.mean(values) if values else np.nan})
+    return pd.DataFrame(lag_results)
+
+
+def factor_industry_exposure(
+    df: pd.DataFrame,
+    factor_col: str,
+    industry_col: str = "sw_l1_name",
+) -> pd.DataFrame:
+    """Compute mean and standardized factor exposure per industry."""
+    valid = df[[factor_col, industry_col]].dropna()
+    grouped = valid.groupby(industry_col)
+    result = pd.DataFrame(
+        {
+            "industry": grouped[factor_col].mean().index,
+            "mean_exposure": grouped[factor_col].mean().values,
+            "std_exposure": grouped[factor_col].std(ddof=0).values,
+            "n_stocks": grouped.size().values,
+        }
+    )
+    std = result["std_exposure"]
+    result["normalized_exposure"] = np.where(std > 0, result["mean_exposure"] / std, 0.0)
+    return result.sort_values("mean_exposure", ascending=False).reset_index(drop=True)
 
 
 def to_plain_dict(value: Any) -> Any:
