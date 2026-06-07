@@ -64,6 +64,7 @@ data_prep -> sample_builder -> factor_research -> factor_evaluation
 ### 2. sample_builder
 
 - 负责从 `daily_panel` 生成统一研究样本。
+- 样本构建优先下推到 DuckDB，用 SQL 完成字段裁剪、日期过滤、股票池过滤、可交易 mask 和基础派生列，避免先全量读入 pandas 再过滤。
 - 处理股票池口径、可交易 mask、停牌过滤、主板过滤和上市交易日过滤。
 - 可交易 mask 必须补齐以下过滤条件：
   - 停牌样本不可交易。
@@ -80,6 +81,7 @@ fwd_hd = adj_close[t+h+1] / adj_close[t+1] - 1
 ```
 
 - 该公式隐含 `t+1` 和 `t+h+1` 都可以成交。若 `t+1` 停牌，样本虽然有连续复权价，也不能静默计算 forward return，必须标记为 `NaN`。若 `t+h+1` 停牌，同样标记为 `NaN`，避免收益被前值填充拉向 0。
+- forward return 优先用 DuckDB 窗口函数 `LEAD` 生成，再输出给后续因子计算和评价模块。
 - 默认输出 `fwd_1d / fwd_3d / fwd_5d / fwd_10d / fwd_20d`。
 - 第一版主评估口径仍以 3-5 日短线为主，`fwd_5d` 作为 primary horizon。
 - 某交易日截面股票数小于 30 时跳过该日，并在结果中记录 `skipped_dates`。
@@ -87,6 +89,9 @@ fwd_hd = adj_close[t+h+1] / adj_close[t+1] - 1
 ### 3. factor_research
 
 - 负责因子注册、因子计算和因子预处理。
+- 因子计算分两类：
+  - SQL / 窗口类因子优先放在 DuckDB 计算，例如动量、反转、均线、成交量变化率、滚动波动率。
+  - 需要复杂 Python 逻辑的因子先通过 pandas 实现，后续批量计算压力上来后迁移到 Polars 后端。
 - 因子注册表使用 YAML，作为候选因子的静态定义入口。
 - `factor_registry.yaml` 中的 `status` 永远等于 `candidate`。真实状态由 `factor_library.json` 维护，避免人工注册表和机器评价状态互相覆盖。
 - 第一版只支持 `builtin:*` 实现，不做公式解析器。
@@ -106,6 +111,8 @@ raw factor -> MAD winsorize -> cross-sectional zscore -> neutralize -> re-standa
 ```
 
 - neutralization 发生在 zscore 之后。这个顺序不影响 RankIC 的秩相关解释，但会影响回归 beta 和 factor exposure 的数值解释，报告中要注明。
+- winsorize、zscore、rank、quantile 等横截面预处理第一版可由 pandas 实现，但接口要保留计算后端边界，避免把 pandas API 泄漏成长期公共契约。
+- Polars 作为后续高速后端预留，用于批量横截面 rank / zscore / winsorize / quantile 和多因子宽表计算；v1 不把 Polars 作为必选依赖。
 - preprocessing 前发现因子全为 `NaN`，直接 `rejected`，reason 为 `calculation yielded all NaN`。
 - preprocessing 前发现因子方差为 0，直接 `rejected`，reason 为 `constant factor values`。
 - 默认评价口径使用市值中性化；行业 + 市值中性化作为可选口径。
@@ -113,6 +120,8 @@ raw factor -> MAD winsorize -> cross-sectional zscore -> neutralize -> re-standa
 ### 4. factor_evaluation
 
 - 负责因子评价、gate 和 `factor_library` 入库状态。
+- 聚合类评价指标优先下推 DuckDB，例如覆盖率、分层收益、top/bottom 组收益和 long-short 日度收益中间表。
+- 需要逐日截面 rank/corr 的指标第一版可复用 pandas 逻辑；后续批量因子评估时迁移到 Polars，减少按日期 Python 循环。
 - 必须输出 IC、RankIC、IC IR、胜率、覆盖率、分层收益、top/bottom、long-short spread、因子自相关。
 - IC 统计必须补充：
   - `ic_t_stat = mean_ic / (std_ic / sqrt(n_days))`。
@@ -219,7 +228,7 @@ gate:
 
 ## 因子值数据契约
 
-- 内部计算使用宽表：`trade_date / ts_code` 为索引，每个因子一列，便于 pandas 向量化。
+- 内部计算使用宽表：`trade_date / ts_code` 为索引，每个因子一列，便于 pandas / Polars / NumPy 等计算后端向量化。
 - 入库和持久化使用长表：`trade_date / ts_code / factor_id / factor_value_raw / factor_value_processed`。
 - 长表使用 `factor_id + trade_date + ts_code` 作为查询和去重主键口径，便于 DuckDB 查询。
 - `factor_library.py` 负责宽表与长表之间的 pivot / unpivot 转换。
@@ -335,12 +344,12 @@ class FactorSpec:
 
 ## Tech Stack
 
-沿用现有技术栈：
+技术栈按职责分层，不把 pandas 作为长期批量计算主引擎：
 
-- `DuckDB`：本地数据仓库。
-- `pandas`：样本构建、因子计算、横截面处理。
-- `numpy`：数值计算；每天截面中性化用 `np.linalg.lstsq`，避免引入 statsmodels 完整推断开销。
-- `statsmodels`：只用于需要统计推断的回归检验，例如 `compute_factor_return_t` 的 OLS t 值。
+- `DuckDB`：本地数据仓库和批处理计算引擎。优先负责样本过滤、forward returns、SQL / 窗口类因子、聚合评价中间表和结果持久化。
+- `pandas`：研究工作台和兼容层。用于 notebook 探索、小样本 debug、报告展示、可视化输入，以及 v1 中暂未下推 DuckDB 的少量横截面逻辑。
+- `numpy`：矩阵和数值计算。每天截面中性化用 `np.linalg.lstsq`，避免引入 statsmodels 完整推断开销。
+- `statsmodels`：只用于需要统计推断的回归检验，例如 `compute_factor_return_t` 的 OLS t 值，不作为批量中性化主路径。
 - `Typer`：CLI。
 - `Jinja2`：Markdown 报告模板。
 - `pytest`：单元测试和集成测试。
@@ -349,10 +358,15 @@ class FactorSpec:
 
 - `PyYAML`：读取 `factor_registry.yaml`、`evaluation.yaml`、`universe.yaml`。
 
+性能预留：
+
+- `Polars`：作为 v1.1 高速计算后端预留，不作为 v1 必选依赖。优先用于批量因子的横截面 rank / zscore / winsorize / quantile、join、rolling 和多因子宽表计算。
+- 公共接口不要暴露 pandas 专属对象假设；函数边界以字段契约和 DataFrame 语义为主，后续允许接入 `backend="pandas" / "polars"`。
+
 第一版不引入：
 
 - Qlib / Zipline / Backtrader。
-- Polars / Dask / Spark。
+- Dask / Spark。
 - 复杂公式解析器。
 - 数据库 ORM。
 - 前端 dashboard。
@@ -389,24 +403,27 @@ CLI 只负责串联四模块，不在 CLI 里写业务计算逻辑。若 `daily_
 
 1. 新增 `ashare_factor.models`，定义 `FactorSpec / SampleConfig / EvaluationConfig / EvaluationResult / GateDecision`。
 2. 新增 YAML 配置：`factor_registry.yaml`、`evaluation.yaml`、`universe.yaml`。
-3. 实现 `sample_builder`：读取 `daily_panel`、构建可交易样本、计算 forward returns。
-4. 实现 `factor_research`：读取注册表、计算 3 个 demo 因子、完成预处理。
-5. 实现 `factor_evaluation`：复用现有 IC、分层收益、自相关和交易表现逻辑，输出统一 `EvaluationResult`。
+3. 实现 `sample_builder`：用 DuckDB 读取 `daily_panel`、构建可交易样本、计算 forward returns。
+4. 实现 `factor_research`：读取注册表，优先用 DuckDB 计算 3 个 demo 因子，完成预处理。
+5. 实现 `factor_evaluation`：聚合指标优先用 DuckDB 生成中间表，复用现有 IC、分层收益、自相关和交易表现逻辑，输出统一 `EvaluationResult`。
 6. 实现 hard gate + soft gate 和 `factor_library.json` 更新。
 7. 实现 Markdown 报告。
 8. 实现 CLI。
-9. 更新或保留薄 wrapper，让旧 notebook 不被立即破坏。
-10. 新增测试并跑通 `momentum_20d_v1` demo。
+9. 预留 `backend` 边界，但 v1 默认仍用 DuckDB + pandas + NumPy 跑通。
+10. 更新或保留薄 wrapper，让旧 notebook 不被立即破坏。
+11. 新增测试并跑通 `momentum_20d_v1` demo。
 
 ## Acceptance Criteria
 
 - 可以从已有 DuckDB 读取 `daily_panel`，并检查关键字段是否存在。
 - 不破坏原有数据采集、入库、`build-panel` 和 DQ 流程。
+- 样本过滤、forward returns 和 SQL / 窗口类 demo 因子优先在 DuckDB 内完成。
 - 可以构建主板研究样本，生成包含停牌、涨跌停、ST、流动性、新股和上市交易日过滤的可交易 mask。
 - 可以在 `t+1` 或 `t+h+1` 不可交易时把对应 forward return 标记为 `NaN`。
 - 可以读取 `factor_registry.yaml`，校验 `factor_id` 唯一、必填字段、`data_fields`、`builtin:*` 实现、`direction` 和固定 `candidate` 状态。
 - 至少跑通 `momentum_20d_v1 / reversal_5d_v1 / volatility_20d_v1` 三个 demo 因子。
 - 因子值内部计算使用宽表，持久化输出标准长表，至少包含 `trade_date / ts_code / factor_id / factor_value_raw / factor_value_processed`。
+- pandas 只作为 v1 研究兼容层和部分横截面逻辑实现，不作为公共接口的唯一计算后端假设。
 - 可以完成 winsorize、zscore、neutralize、re-standardize，并在报告里解释中性化顺序。
 - 可以计算 IC、RankIC、IC mean、IC std、IC IR、IC t-stat、IC win rate、IC skew、IC kurtosis、极端负 IC 占比、rolling 252 日 mean IC。
 - 可以计算分层收益、Top 组收益、Q5 回测净值、long-short spread、年化 Sharpe、最大回撤、换手率、`turnover_std` 和 coverage。
