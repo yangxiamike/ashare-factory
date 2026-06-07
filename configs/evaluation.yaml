@@ -16,64 +16,70 @@ evaluation:
   rolling_ic_window: 252
 
 gate:
-  evaluability:
+  validity_gate:
     min_coverage_pct: 0.30
     min_valid_dates: 60
     min_forward_return_samples: 1000
     fail_status: invalid
 
-  direction_checks:
-    require_direction_adjusted_rank_ic_positive: true
-    require_q5_q1_spread_positive: true
-    allow_top_quantile_slightly_negative: true
+  research_evidence_gate:
+    fail_status: rejected
+    default_pass_status: watch
+    evidence:
+      direction:
+        require_direction_adjusted_rank_ic_positive: true
+        require_q5_q1_spread_positive: true
+        allow_top_quantile_slightly_negative: true
+      quantile_structure:
+        require_strict_monotonic_quantiles: false
+        require_top_quantile_effective: true
+        reject_if_quantiles_clearly_reversed: true
+      simplified_trading:
+        primary_path: top_quantile_long_only
+        reference_path: q5_q1_long_short
+        reject_if_top_return_clearly_negative: true
+        reject_if_turnover_uncontrolled: true
+        reject_if_drawdown_uncontrolled: true
 
-  structure_checks:
-    require_strict_monotonic_quantiles: false
-    require_top_quantile_effective: true
-    reject_if_quantiles_clearly_reversed: true
-
-  trading_checks:
-    primary_path: top_quantile_long_only
-    reference_path: q5_q1_long_short
-    reject_if_top_return_clearly_negative: true
-    reject_if_turnover_uncontrolled: true
-    reject_if_drawdown_uncontrolled: true
-
-  baselines:
-    noise:
-      - random_normal
-      - random_uniform
-      - random_by_date_shuffle
-    simple_technical:
-      - reversal_1d
-      - reversal_3d
-      - reversal_5d
-      - momentum_20d
-      - momentum_60d
-      - volatility_20d
-      - turnover_5d
-      - turnover_20d
-      - volume_ratio_5_20
-      - amount_ratio_5_20
-      - amplitude_20d
-      - illiquidity_20d
-    alpha101_easy_subset:
-      enabled: false
-
-  oos:
-    method: time_split
-    in_sample_pct: 0.75
-    holdout_pct: 0.25
-    use_for_parameter_tuning: false
-    require_oos_rank_ic_not_reversed_for_active: true
-    require_oos_q5_q1_spread_not_reversed_for_active: true
-    require_oos_top_return_not_failed_for_active: true
-
-  decision:
+  library_decision_gate:
     default_pass_status: watch
     active_policy: conservative
+    evidence:
+      baseline_comparison:
+        noise:
+          - random_normal
+          - random_uniform
+          - random_by_date_shuffle
+        simple_technical:
+          - reversal_1d
+          - reversal_3d
+          - reversal_5d
+          - momentum_20d
+          - momentum_60d
+          - volatility_20d
+          - turnover_5d
+          - turnover_20d
+          - volume_ratio_5_20
+          - amount_ratio_5_20
+          - amplitude_20d
+          - illiquidity_20d
+        alpha101_easy_subset:
+          enabled: false
+      simple_oos:
+        method: time_split
+        in_sample_pct: 0.75
+        holdout_pct: 0.25
+        use_for_parameter_tuning: false
+        require_oos_rank_ic_not_reversed_for_active: true
+        require_oos_q5_q1_spread_not_reversed_for_active: true
+        require_oos_top_return_not_failed_for_active: true
+      stability:
+        check_single_year_concentration: true
+        reject_if_turnover_uncontrolled: true
+        reject_if_drawdown_uncontrolled: true
     active_requires:
       - evaluability_passed
+      - research_evidence_passed
       - in_sample_direction_correct
       - oos_direction_not_reversed
       - in_sample_q5_q1_spread_positive

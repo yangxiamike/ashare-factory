@@ -359,4 +359,4 @@ def apply_gate(eval_result: EvaluationResult, config: GateConfig) -> GateDecisio
 
 ## Codex 最终方案
 
-二次修订后，最终方案和原建议中的 hard/soft 打分 gate 不一致。保留四模块工程结构和已有评价指标设计，但把 gate 改成候选因子研究入库机制：可评价性检查、方向预测力检查、分层结构检查、简化交易表现检查、baseline 相对比较、simple OOS 复核和保守状态管理。`configs/evaluation.yaml` 同步移除 `score >= 6.5 / 4.0` 裁决模板，改为最低可评价条件、baseline 列表、OOS 切分和 active 保守条件。
+三次修订后，最终方案和原建议中的 hard/soft 打分 gate 不一致，也不把 6 个分析视角实现成 6 个复杂 gate 模块。保留四模块工程结构和已有评价指标设计，但把 gate 压缩成三层：Validity Gate 判断可评价性，失败为 `invalid`；Research Evidence Gate 合并方向预测力、分层结构和简化交易表现，判断是否有基本研究信号；Library Decision Gate 合并 baseline comparison、simple OOS 和稳定性检查，最终给出 `rejected / watch / active`。指标只是 decision evidence，不是新的架构层级。
