@@ -25,9 +25,9 @@ def load_universe_config(
         universe_name=default_universe,
         require_main_board=bool(raw.get("require_main_board", True)),
         exclude_st=bool(raw.get("exclude_st", True)),
-        min_listing_days=int(raw.get("min_listing_days", 60)),
+        min_listing_days=int(raw.get("min_listing_days", 84)),
         min_amount=float(raw["min_amount"]),
-        new_stock_window_days=int(raw.get("new_stock_window_days", 20)),
+        new_stock_window_days=int(raw.get("new_stock_window_days", 28)),
         forward_horizons=horizons,
         min_cross_section_count=int(raw.get("min_cross_section_count", 30)),
     )

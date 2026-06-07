@@ -36,9 +36,9 @@ class SampleConfig:
     end_date: str | None = None
     require_main_board: bool = True
     exclude_st: bool = True
-    min_listing_days: int = 60
+    min_listing_days: int = 84
     min_amount: float = 1_000_000.0
-    new_stock_window_days: int = 20
+    new_stock_window_days: int = 28
     forward_horizons: tuple[int, ...] = (1, 3, 5, 10, 20)
     min_cross_section_count: int = 30
 

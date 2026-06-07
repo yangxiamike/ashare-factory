@@ -120,6 +120,37 @@ def test_load_daily_panel_keeps_industry_and_optional_limit_columns(tmp_path: Pa
     assert df.loc[0, "next_open_is_limit_up"]
 
 
+def test_load_daily_panel_keeps_suspended_rows_for_forward_return_alignment(tmp_path: Path) -> None:
+    db_path = tmp_path / "panel.duckdb"
+    with duckdb.connect(str(db_path)) as con:
+        con.execute(
+            """
+            CREATE TABLE daily_panel (
+                trade_date VARCHAR,
+                ts_code VARCHAR,
+                close DOUBLE,
+                adj_factor DOUBLE,
+                total_mv DOUBLE,
+                is_suspended BOOLEAN,
+                sw_l1_name VARCHAR
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO daily_panel VALUES
+            ('20220103', '000001.SZ', 10.0, 1.0, 1000.0, FALSE, 'Bank'),
+            ('20220104', '000001.SZ', 10.0, 1.0, 1000.0, TRUE, 'Bank'),
+            ('20220105', '000001.SZ', 11.0, 1.0, 1000.0, FALSE, 'Bank')
+            """
+        )
+
+    df = load_daily_panel(db_path, "20220101")
+
+    assert len(df) == 3
+    assert df["is_suspended"].tolist() == [False, True, False]
+
+
 def test_compute_momentum_supports_custom_column_name() -> None:
     df = pd.DataFrame(
         {

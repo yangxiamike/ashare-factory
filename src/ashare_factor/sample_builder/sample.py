@@ -22,6 +22,7 @@ REQUIRED_SAMPLE_COLUMNS = {
     "ts_code",
     "name",
     "market",
+    "list_date",
     "open",
     "close",
     "amount",
@@ -102,6 +103,7 @@ def _build_sample_sql(config: SampleConfig) -> str:
                 ts_code,
                 name,
                 market,
+                list_date,
                 open,
                 close,
                 amount,
@@ -112,9 +114,10 @@ def _build_sample_sql(config: SampleConfig) -> str:
                 is_suspended,
                 sw_l1_name,
                 close * adj_factor AS adj_close,
-                ROW_NUMBER() OVER (
-                    PARTITION BY ts_code
-                    ORDER BY trade_date
+                DATEDIFF(
+                    'day',
+                    STRPTIME(list_date, '%Y%m%d'),
+                    STRPTIME(trade_date, '%Y%m%d')
                 ) AS listed_trade_days,
                 CASE
                     WHEN market = '主板' THEN TRUE

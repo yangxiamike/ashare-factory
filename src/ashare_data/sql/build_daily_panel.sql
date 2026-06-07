@@ -28,6 +28,7 @@ SELECT
     d.ts_code,
     sb.name,
     sb.market,
+    sb.list_date,
     sb.area,
     sb.industry AS stock_basic_industry,
     d.open,

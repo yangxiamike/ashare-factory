@@ -47,7 +47,7 @@ def load_daily_panel(duckdb_path, start_date="20220101"):
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df["is_suspended"] = df["is_suspended"].fillna(False).astype(bool)
     df["adj_close"] = df["close"] * df["adj_factor"]
-    df = df[~df["is_suspended"] & (df["total_mv"] > 0)].copy()
+    df = df[df["total_mv"] > 0].copy()
     if {"open", "up_limit"}.issubset(df.columns):
         df["is_limit_up_at_open"] = df["open"].notna() & df["up_limit"].notna() & (
             df["open"] >= df["up_limit"]

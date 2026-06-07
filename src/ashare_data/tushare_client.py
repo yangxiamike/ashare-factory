@@ -73,7 +73,7 @@ class TushareClient:
         return self._call_with_retry(
             self._pro.stock_basic,
             exchange="",
-            list_status="L",
+            list_status="",
             fields="ts_code,symbol,name,area,industry,market,list_date,act_name,act_ent_type",
         )
 

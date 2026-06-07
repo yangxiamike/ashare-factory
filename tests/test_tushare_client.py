@@ -4,6 +4,26 @@ from ashare_data.config import Settings
 from ashare_data.tushare_client import TushareClient
 
 
+def test_stock_basic_fetches_all_statuses(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+    sentinel = object()
+
+    def fake_call_with_retry(self, fn, **kwargs) -> pd.DataFrame:
+        captured.update(kwargs)
+        return pd.DataFrame([{"ts_code": "000001.SZ"}])
+
+    monkeypatch.setattr(TushareClient, "__post_init__", lambda self: None)
+    monkeypatch.setattr(TushareClient, "_call_with_retry", fake_call_with_retry)
+
+    client = TushareClient(Settings(TUSHARE_TOKEN="test-token"))
+    object.__setattr__(client, "_pro", type("FakePro", (), {"stock_basic": sentinel})())
+    client.stock_basic()
+
+    assert captured["exchange"] == ""
+    assert captured["list_status"] == ""
+    assert "list_date" in captured["fields"]
+
+
 def test_index_member_all_fetches_current_and_historical_rows(monkeypatch) -> None:
     calls: list[dict[str, str]] = []
 
