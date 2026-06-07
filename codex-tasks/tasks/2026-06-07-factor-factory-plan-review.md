@@ -359,4 +359,4 @@ def apply_gate(eval_result: EvaluationResult, config: GateConfig) -> GateDecisio
 
 ## Codex 最终方案
 
-与原建议一致。实际落地范围为方案文档和 `configs/evaluation.yaml` 模板：补齐可交易 mask、forward return 停牌处理、direction 语义、IC/稳定性/交易表现指标、可复现字段、长表宽表契约、statsmodels 与 lstsq 分工、hard/soft gate、factor_library 状态管理、CLI 验证命令和边界情况说明。
+二次修订后，最终方案和原建议中的 hard/soft 打分 gate 不一致。保留四模块工程结构和已有评价指标设计，但把 gate 改成候选因子研究入库机制：可评价性检查、方向预测力检查、分层结构检查、简化交易表现检查、baseline 相对比较、simple OOS 复核和保守状态管理。`configs/evaluation.yaml` 同步移除 `score >= 6.5 / 4.0` 裁决模板，改为最低可评价条件、baseline 列表、OOS 切分和 active 保守条件。

@@ -16,117 +16,70 @@ evaluation:
   rolling_ic_window: 252
 
 gate:
-  hard:
-    - metric: mean_rank_ic
-      operator: ">"
-      threshold: 0.0
-      reason_on_fail: "IC方向错误或零预测能力"
-    - metric: coverage_pct
-      operator: ">"
-      threshold: 0.3
-      reason_on_fail: "因子覆盖率不足，样本偏差严重"
-    - metric: n_valid_dates
-      operator: ">"
-      threshold: 60
-      reason_on_fail: "有效交易日过少，统计不可靠"
+  evaluability:
+    min_coverage_pct: 0.30
+    min_valid_dates: 60
+    min_forward_return_samples: 1000
+    fail_status: invalid
 
-  soft:
-    metrics:
-      mean_rank_ic:
-        weight: 0.20
-        scoring:
-          0.00: 0
-          0.01: 3
-          0.02: 5
-          0.03: 7
-          0.05: 9
-          0.07: 10
+  direction_checks:
+    require_direction_adjusted_rank_ic_positive: true
+    require_q5_q1_spread_positive: true
+    allow_top_quantile_slightly_negative: true
 
-      ic_ir:
-        weight: 0.20
-        scoring:
-          0.0: 0
-          0.2: 3
-          0.3: 5
-          0.5: 7
-          0.8: 9
-          1.0: 10
+  structure_checks:
+    require_strict_monotonic_quantiles: false
+    require_top_quantile_effective: true
+    reject_if_quantiles_clearly_reversed: true
 
-      win_rate:
-        weight: 0.10
-        scoring:
-          0.48: 0
-          0.50: 2
-          0.52: 4
-          0.55: 6
-          0.58: 8
-          0.60: 10
+  trading_checks:
+    primary_path: top_quantile_long_only
+    reference_path: q5_q1_long_short
+    reject_if_top_return_clearly_negative: true
+    reject_if_turnover_uncontrolled: true
+    reject_if_drawdown_uncontrolled: true
 
-      long_short_sharpe:
-        weight: 0.15
-        scoring:
-          0.0: 0
-          0.3: 3
-          0.5: 5
-          0.8: 7
-          1.2: 9
-          1.5: 10
+  baselines:
+    noise:
+      - random_normal
+      - random_uniform
+      - random_by_date_shuffle
+    simple_technical:
+      - reversal_1d
+      - reversal_3d
+      - reversal_5d
+      - momentum_20d
+      - momentum_60d
+      - volatility_20d
+      - turnover_5d
+      - turnover_20d
+      - volume_ratio_5_20
+      - amount_ratio_5_20
+      - amplitude_20d
+      - illiquidity_20d
+    alpha101_easy_subset:
+      enabled: false
 
-      mean_turnover:
-        weight: 0.10
-        scoring:
-          0.5: 0
-          0.4: 2
-          0.3: 4
-          0.2: 7
-          0.1: 9
-          0.05: 10
+  oos:
+    method: time_split
+    in_sample_pct: 0.75
+    holdout_pct: 0.25
+    use_for_parameter_tuning: false
+    require_oos_rank_ic_not_reversed_for_active: true
+    require_oos_q5_q1_spread_not_reversed_for_active: true
+    require_oos_top_return_not_failed_for_active: true
 
-      is_monotonic:
-        weight: 0.10
-        scoring:
-          false: 0
-          true: 10
-
-      pct_abs_t_gt_2:
-        weight: 0.10
-        scoring:
-          0.0: 0
-          0.2: 3
-          0.3: 5
-          0.4: 7
-          0.5: 10
-
-      ic_half_life:
-        weight: 0.05
-        scoring:
-          0: 0
-          2: 3
-          3: 5
-          5: 7
-          10: 9
-          15: 10
-
-    decision:
-      active: "score >= 6.5"
-      watch: "score >= 4.0"
-
-    category_overrides:
-      momentum:
-        metrics:
-          mean_turnover:
-            weight: 0.15
-          win_rate:
-            weight: 0.08
-      reversal:
-        metrics:
-          win_rate:
-            weight: 0.05
-          long_short_sharpe:
-            weight: 0.20
-      volatility:
-        metrics:
-          is_monotonic:
-            weight: 0.05
-          ic_half_life:
-            weight: 0.10
+  decision:
+    default_pass_status: watch
+    active_policy: conservative
+    active_requires:
+      - evaluability_passed
+      - in_sample_direction_correct
+      - oos_direction_not_reversed
+      - in_sample_q5_q1_spread_positive
+      - oos_q5_q1_spread_not_reversed
+      - top_quantile_return_positive
+      - stronger_than_most_noise_baselines
+      - not_worse_than_simple_technical_baselines
+      - no_single_year_concentration
+      - turnover_and_drawdown_not_uncontrolled

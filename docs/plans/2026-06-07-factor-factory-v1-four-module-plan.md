@@ -41,7 +41,7 @@ data_prep -> sample_builder -> factor_research -> factor_evaluation
 - 根据注册表计算 3 个 demo 因子。
 - 对因子值做去极值、标准化和可选中性化。
 - 计算 IC、RankIC、分层收益、交易表现、覆盖率、稳定性和分层画像指标。
-- 根据 gate 规则给出 `active / watch / rejected` 状态。
+- 根据 gate 规则给出 `invalid / rejected / watch / active` 状态。
 
 输出：
 
@@ -102,8 +102,8 @@ fwd_hd = adj_close[t+h+1] / adj_close[t+1] - 1
 - `FactorSpec.direction` 必须明确语义：
   - `positive`：因子值越大，预期未来收益越高。
   - `negative`：因子值越大，预期未来收益越低。
-- 评价系统统一把 direction 调整到“期望 IC 为正”的口径后再做 gate。也就是说，负向因子要么在计算阶段输出反向值，要么在评价阶段把 IC 符号调整为方向一致口径，但只能选择一种方式并写清楚。
-- `reversal_5d_v1` 推荐实现为 `factor_value = -short_term_return`，并保持 `direction = "negative"` 的业务说明。评价报告需注明实际 gate 使用的是方向调整后的 IC。
+- 因子计算阶段保留原始业务公式，不提前为了通过评价而翻转符号；评价阶段统一把 direction 调整到“期望 IC 为正”的口径后再做 gate。
+- `reversal_5d_v1` 推荐实现为 `factor_value = short_term_return`，并保持 `direction = "negative"`。评价报告需注明实际 gate 使用的是方向调整后的 IC。
 - 预处理参数统一由 `configs/evaluation.yaml` 管理，默认流程为：
 
 ```text
@@ -113,8 +113,8 @@ raw factor -> MAD winsorize -> cross-sectional zscore -> neutralize -> re-standa
 - neutralization 发生在 zscore 之后。这个顺序不影响 RankIC 的秩相关解释，但会影响回归 beta 和 factor exposure 的数值解释，报告中要注明。
 - winsorize、zscore、rank、quantile 等横截面预处理第一版可由 pandas 实现，但接口要保留计算后端边界，避免把 pandas API 泄漏成长期公共契约。
 - Polars 作为后续高速后端预留，用于批量横截面 rank / zscore / winsorize / quantile 和多因子宽表计算；v1 不把 Polars 作为必选依赖。
-- preprocessing 前发现因子全为 `NaN`，直接 `rejected`，reason 为 `calculation yielded all NaN`。
-- preprocessing 前发现因子方差为 0，直接 `rejected`，reason 为 `constant factor values`。
+- preprocessing 前发现因子全为 `NaN`，直接 `invalid`，reason 为 `calculation yielded all NaN`。
+- preprocessing 前发现因子方差为 0，直接 `invalid`，reason 为 `constant factor values`。
 - 默认评价口径使用市值中性化；行业 + 市值中性化作为可选口径。
 
 ### 4. factor_evaluation
@@ -149,11 +149,11 @@ raw factor -> MAD winsorize -> cross-sectional zscore -> neutralize -> re-standa
   - `data_snapshot`：date range、row count、DuckDB 路径。
   - `code_version.git_commit`：`git rev-parse HEAD`。
   - `code_version.config_hashes`：registry / universe / evaluation yaml 的 md5。
-- gate 阈值写在 `configs/evaluation.yaml`，不写死在代码里。
+- gate 的最低可评价条件、baseline 列表、OOS 切分和状态规则写在 `configs/evaluation.yaml`，不写死在代码里。
 - gate 状态固定为：
 
 ```text
-active / watch / rejected
+invalid / rejected / watch / active
 ```
 
 - `candidate` 是注册表初始状态，不是评价后的最终状态。
@@ -165,54 +165,155 @@ active / watch / rejected
 
 ## Gate 设计
 
-gate 分为 hard gate 和 soft gate。
+v1 gate 的定位是“候选因子研究入库 gate”，不是“实盘交易准入 gate”。
 
-Hard gate 是准入条件，任一失败直接 `rejected`：
+核心裁决不使用固定总分阈值，例如 `score >= 6.5`。这类阈值可以作为调试观察值，但不能作为第一版的主规则。v1 更关注候选因子是否能被统一评价、是否方向正确、是否强于 baseline、是否在简单 OOS 阶段没有明显失效。
 
-- `mean_rank_ic > 0`：方向调整后仍必须为正。
-- `coverage_pct > 0.3`：覆盖率过低时样本偏差不可接受。
-- `n_valid_dates > 60`：有效交易日过少时统计不可靠。
+gate 分为 6 层：
 
-Soft gate 是加权评分：
-
-- 每个指标映射到 0-10 分。
-- 阈值之间用线性插值补全。
-- `score >= 6.5` 为 `active`。
-- `4.0 <= score < 6.5` 为 `watch`。
-- `score < 4.0` 为 `rejected`。
-- momentum / reversal / volatility 支持 category override 调整权重。
-- `GateDecision.reasons` 需要记录 hard fail 原因、低分指标、每个指标得分和总分。
-
-Gate YAML 草案已落在 `configs/evaluation.yaml`。核心结构如下：
-
-```yaml
-gate:
-  hard:
-    - metric: mean_rank_ic
-      operator: ">"
-      threshold: 0.0
-      reason_on_fail: "IC方向错误或零预测能力"
-    - metric: coverage_pct
-      operator: ">"
-      threshold: 0.3
-      reason_on_fail: "因子覆盖率不足，样本偏差严重"
-    - metric: n_valid_dates
-      operator: ">"
-      threshold: 60
-      reason_on_fail: "有效交易日过少，统计不可靠"
-
-  soft:
-    decision:
-      active: "score >= 6.5"
-      watch: "score >= 4.0"
+```text
+Gate 0  可评价性检查
+Gate 1  方向与预测力检查
+Gate 2  分层结构检查
+Gate 3  简化交易表现检查
+Gate 4  baseline 相对比较
+Gate 5  simple OOS 复核
 ```
+
+### Gate 0：可评价性检查
+
+这一层只判断因子能不能被评价，不判断因子好不好。失败状态为 `invalid`。
+
+检查内容：
+
+- 因子是否成功计算。
+- 因子是否全 NaN。
+- 因子是否为常数。
+- 所需字段是否存在。
+- forward return 是否能正常对齐。
+- 覆盖率是否太低。
+- 有效交易日是否太少。
+- forward return 有效样本是否太少。
+- 是否存在明显未来函数风险。
+
+`coverage_pct >= 0.3`、`n_valid_dates >= 60` 这类阈值只代表最低可评价条件，不是好因子标准。
+
+### Gate 1：方向与预测力检查
+
+这一层判断因子是否有最基本的预测力。
+
+评价阶段统一做 direction adjustment，所有方向相关指标都看调整后的口径。主要指标：
+
+- direction-adjusted RankIC mean。
+- RankIC IR。
+- RankIC win rate。
+- Q5-Q1 spread。
+- Top quantile return。
+
+v1 不硬性要求 `RankIC > 0.03` 或 `RankIC > 0.05` 这类绝对阈值。第一版只要求方向调整后 RankIC 为正、Q5-Q1 spread 为正、Top 组收益不明显为负。
+
+### Gate 2：分层结构检查
+
+这一层判断因子是否真的有排序能力。
+
+重点看：
+
+- Q1-Q5 分层收益。
+- Q5-Q1 spread。
+- Top quantile return。
+- Top quantile win rate。
+
+v1 不强制严格单调，不要求 `Q1 < Q2 < Q3 < Q4 < Q5`。A 股短线因子很多不会完美单调，但可能头部有效。第一版更关注 Top 组是否有效、Q5-Q1 spread 是否为正、分层结构是否明显反向。
+
+### Gate 3：简化交易表现检查
+
+v1 不做完整交易回测，但要看简化交易表现。
+
+主口径：
+
+```text
+Top quantile long-only 等权组合
+```
+
+参考口径：
+
+```text
+Q5-Q1 long-short spread
+```
+
+当前策略方向是 A 股主板、短线、long-only 倾向，所以 long-short 只作为研究参考，不作为实盘主口径。
+
+需要关注：
+
+- Top 组收益。
+- Top 组 Sharpe。
+- Top 组最大回撤。
+- Top 组换手率。
+- 交易成本后收益。
+- long-short spread。
+
+这一层用于防止 IC 看起来可以，但 Top 组收益很差，或者收益全靠极高换手和不可实现交易。
+
+### Gate 4：baseline 相对比较
+
+这是 v1 gate 的核心改造。
+
+候选因子要和 baseline factor 做相对比较，而不是只看孤立指标。baseline 分三类：
+
+1. Noise baseline：`random_normal`、`random_uniform`、`random_by_date_shuffle`。如果候选因子连随机因子都打不过，不应该进入 `active`。
+2. Simple technical baseline：最朴素的 A 股短线价量因子，例如 `reversal_1d`、`reversal_3d`、`reversal_5d`、`momentum_20d`、`momentum_60d`、`volatility_20d`、`turnover_5d`、`turnover_20d`、`volume_ratio_5_20`、`amount_ratio_5_20`、`amplitude_20d`、`illiquidity_20d`。
+3. Alpha101 easy subset：v1 只预留，不实现。Alpha101 全集不作为 v1 主任务，可作为后续高级 benchmark。
+
+评价结果应报告候选因子在 baseline 分布中的位置，例如 RankIC、Top 组收益、Sharpe、最大回撤、换手率和 OOS 表现的相对分位数。
+
+### Gate 5：simple OOS 复核
+
+v1 需要 simple OOS，但不需要完整 walk-forward。
+
+默认方式：
+
+```text
+按 trade_date 做时间切分：
+前 75% 作为 in-sample / calibration
+后 25% 作为 OOS / holdout
+```
+
+OOS 只用于复核，不用于调参数、不用于选择方向、不用于优化 gate。
+
+评价结果需要同时报告：
+
+- full sample。
+- in-sample。
+- OOS。
+
+`active` 至少要求 in-sample 方向正确、OOS 方向没有反转、OOS Q5-Q1 spread 没有明显反向、OOS Top 组收益没有明显失效。若 IS 表现不错但 OOS 明显反向，最多给 `watch`，严重时给 `rejected`。
+
+### 最终决策
+
+`invalid`：
+
+- 因子无法有效评价，例如全 NaN、常数因子、缺字段、样本太少、覆盖率太低、forward return 无法对齐。
+
+`rejected`：
+
+- 因子可以评价，但方向调整后 RankIC 仍然非正、Q5-Q1 spread 非正、Top 组收益明显为负、弱于大部分 noise baseline，或 IS 和 OOS 都没有预测力。
+
+`watch`：
+
+- v1 最常见的通过状态。因子方向正确、强于随机 baseline、分层结构有一定效果，但 OOS 不够强、不明显强于 simple technical baseline，或稳定性证据不足。
+
+`active`：
+
+- 必须保守。因子需通过可评价性检查，IS/OOS 方向正确，IS/OOS Q5-Q1 spread 为正，Top 组收益为正，强于大部分 noise baseline，相对 simple technical baseline 不差，分阶段表现没有明显集中在某一年，换手和回撤没有明显失控。
+
+`active` 不代表可以实盘，只代表研究层面通过 v1 gate，可以作为候选可用因子进入 `factor_library`。
 
 ## factor_library 状态管理
 
 - `factor_registry.yaml` 是静态定义，走 git，人工维护。
 - `factor_registry.yaml.status` 固定为 `candidate`。
 - `factor_library.json` 是状态唯一权威来源，机器生成，每次 evaluate 后更新。
-- `factor_library.json` 支持状态：`candidate / active / watch / rejected / archived`。
+- `factor_library.json` 支持状态：`candidate / invalid / rejected / watch / active / archived`。
 - `factor_library.json` 至少保存最近一次评价摘要：
   - `status`
   - `last_run_id`
@@ -328,9 +429,9 @@ class FactorSpec:
 还需要：
 
 - `SampleConfig`：股票池、日期范围、上市交易日过滤、forward horizons、流动性阈值、新股过滤窗口。
-- `EvaluationConfig`：primary horizon、分组数、交易成本、预处理口径、gate 阈值。
-- `EvaluationResult`：评价指标、样本信息、`data_snapshot`、`code_version`、gate 结果、输出路径。
-- `GateDecision`：状态、原因列表、hard gate 结果、各指标分数、总分。
+- `EvaluationConfig`：primary horizon、分组数、交易成本、预处理口径、最低可评价条件、baseline 列表和 OOS 切分口径。
+- `EvaluationResult`：评价指标、样本信息、`data_snapshot`、`code_version`、baseline 对比、OOS 复核、gate 结果、输出路径。
+- `GateDecision`：状态、原因列表、各层 gate 检查结果、baseline 相对排名、OOS 复核结论。
 
 不建议第一版引入：
 
@@ -406,7 +507,7 @@ CLI 只负责串联四模块，不在 CLI 里写业务计算逻辑。若 `daily_
 3. 实现 `sample_builder`：用 DuckDB 读取 `daily_panel`、构建可交易样本、计算 forward returns。
 4. 实现 `factor_research`：读取注册表，优先用 DuckDB 计算 3 个 demo 因子，完成预处理。
 5. 实现 `factor_evaluation`：聚合指标优先用 DuckDB 生成中间表，复用现有 IC、分层收益、自相关和交易表现逻辑，输出统一 `EvaluationResult`。
-6. 实现 hard gate + soft gate 和 `factor_library.json` 更新。
+6. 实现 Gate 0-5、baseline 相对比较、simple OOS 复核和 `factor_library.json` 更新。
 7. 实现 Markdown 报告。
 8. 实现 CLI。
 9. 预留 `backend` 边界，但 v1 默认仍用 DuckDB + pandas + NumPy 跑通。
@@ -428,7 +529,7 @@ CLI 只负责串联四模块，不在 CLI 里写业务计算逻辑。若 `daily_
 - 可以计算 IC、RankIC、IC mean、IC std、IC IR、IC t-stat、IC win rate、IC skew、IC kurtosis、极端负 IC 占比、rolling 252 日 mean IC。
 - 可以计算分层收益、Top 组收益、Q5 回测净值、long-short spread、年化 Sharpe、最大回撤、换手率、`turnover_std` 和 coverage。
 - 可以输出市值分组 IC、行业暴露检查结果，并预留牛熊市分层 IC 字段。
-- 可以根据 `configs/evaluation.yaml` 的 hard gate + soft gate 输出 `active / watch / rejected`，并给出 metric scores、total score 和 reasons。
+- 可以根据 `configs/evaluation.yaml` 的最低可评价条件、baseline 列表和 OOS 规则输出 `invalid / rejected / watch / active`，并给出各层 gate 结论、baseline 相对表现和 reasons。
 - 可以生成带 `data_snapshot` 和 `code_version` 的 `evaluation_result.json`、`factor_library.json` 和 Markdown 因子评价报告。
 - CLI 至少支持 `list-factors`、`validate-registry` 和 `evaluate-factor`。
 
@@ -447,8 +548,10 @@ CLI 只负责串联四模块，不在 CLI 里写业务计算逻辑。若 `daily_
 - zscore 后横截面均值接近 0。
 - neutralize 后会 re-standardize。
 - IC t-stat、skew、kurtosis、rolling mean IC、`turnover_std` 计算正确。
-- gate hard fail 时直接 rejected。
-- gate soft score 能通过线性插值输出 `active / watch / rejected`。
+- 可评价性检查失败时直接 `invalid`。
+- 方向、分层、交易表现、baseline 或 OOS 明显失败时输出 `rejected`。
+- 信号有一定价值但证据不足时输出 `watch`。
+- 只有 baseline 和 OOS 都较稳健时才输出 `active`。
 - factor_library 状态更新不回写 registry。
 
 集成测试：
@@ -457,7 +560,7 @@ CLI 只负责串联四模块，不在 CLI 里写业务计算逻辑。若 `daily_
 - CLI 能 `list-factors`。
 - CLI 能 `validate-registry` 并报告清晰错误。
 - CLI 能跑单个 demo 因子并生成 JSON、Markdown 和 `factor_library.json`。
-- `evaluation_result.json` 包含 `data_snapshot`、`code_version`、gate scores 和输出路径。
+- `evaluation_result.json` 包含 `data_snapshot`、`code_version`、baseline 对比、OOS 复核、gate 结论和输出路径。
 - 现有 `factor_eval` / notebook 入口不被破坏，或已明确迁移到新入口。
 
 ## Assumptions
