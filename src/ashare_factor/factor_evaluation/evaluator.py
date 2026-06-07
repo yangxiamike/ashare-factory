@@ -10,6 +10,8 @@ from typing import Any
 import duckdb
 import pandas as pd
 
+from .baseline import build_noise_baseline_evidence
+from .factor_store import write_evaluation_artifacts, write_factor_values
 from .gate import apply_gate
 from .metrics import compare_with_baselines, compute_evaluation_metrics, sanitize_for_json, to_plain_dict
 
@@ -97,6 +99,14 @@ def evaluate_factor(
 
     run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
     output_paths = _build_output_paths(output_root=Path(output_root), factor_id=factor_id, run_id=run_id)
+    baseline_evidence = baseline_evidence or build_noise_baseline_evidence(
+        frame,
+        processed_col=processed_col,
+        raw_col=raw_col,
+        forward_col=forward_col,
+        evaluation_cfg=eval_cfg,
+        gate_cfg=config.get("gate", {}).get("library_decision_gate", {}),
+    )
     result = {
         "factor_id": factor_id,
         "factor_spec": spec,
@@ -114,6 +124,9 @@ def evaluate_factor(
     }
     result["baseline_comparison"] = compare_with_baselines(result, baseline_evidence, config.get("gate", {}).get("library_decision_gate"))
     result["gate_decision"] = apply_gate(result, config)
+    if duckdb_path:
+        write_factor_values(duckdb_path, frame)
+        write_evaluation_artifacts(duckdb_path, result)
 
     if persist_json:
         _write_evaluation_result_json(result, output_paths["evaluation_result_json"])

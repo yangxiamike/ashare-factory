@@ -7,10 +7,13 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import typer
+import yaml
 
 from ashare_data.config import Settings
+from ashare_factor.data_access import get_daily_panel_columns
 from ashare_factor.factor_evaluation.metrics import sanitize_for_json
-from ashare_factor.models import EvaluationConfig, PreprocessConfig, SampleConfig, load_yaml_like
+from ashare_factor.models import EvaluationConfig, PreprocessConfig, SampleConfig
+from ashare_factor.sample_builder.universe import load_universe_config
 
 app = typer.Typer(help="A-share factor factory CLI.")
 
@@ -239,9 +242,15 @@ def _run_factor_pipeline(
         output_root=result_root.parent,
         report_root=report_root,
     )
-    registry = _call_public("load_factor_registry", path=registry_path, registry_path=registry_path)
+    settings = Settings(duckdb_path=duckdb_path).resolve_paths()
+    available_columns = get_daily_panel_columns(settings.duckdb_path) if settings.duckdb_path.exists() else None
+    registry = _call_public(
+        "load_factor_registry",
+        path=registry_path,
+        registry_path=registry_path,
+        available_columns=available_columns,
+    )
     factor_spec = _find_factor_spec(registry, factor_id)
-    settings = Settings(duckdb_path=duckdb_path).resolve_paths() if duckdb_path else None
     sample_result = _call_public(
         "build_sample",
         start_date=start_date,
@@ -267,7 +276,7 @@ def _run_factor_pipeline(
         factor_df=eval_frame,
         factor_spec=factor_spec,
         evaluation_config=evaluation_config,
-        duckdb_path=(settings.duckdb_path if settings else None),
+        duckdb_path=settings.duckdb_path,
         registry_path=registry_path,
         universe_path=universe_path,
         evaluation_path=evaluation_path,
@@ -291,38 +300,23 @@ def _write_result_json(evaluation_result: dict[str, Any]) -> Path:
 
 
 def _load_sample_config(path: Path, *, start_date: str | None, end_date: str | None) -> SampleConfig:
-    data = load_yaml_like(path)
-    if "universes" in data:
-        universe_name = data.get("default_universe")
-        raw = data["universes"][universe_name]
-        return SampleConfig(
-            universe_name=universe_name,
-            start_date=start_date,
-            end_date=end_date,
-            require_main_board=bool(raw.get("require_main_board", True)),
-            exclude_st=bool(raw.get("exclude_st", True)),
-            min_listing_days=int(raw.get("min_listing_days", 60)),
-            min_amount=float(raw.get("min_amount", 1_000_000.0)),
-            new_stock_window_days=int(raw.get("new_stock_window_days", 20)),
-            forward_horizons=tuple(int(x) for x in raw.get("forward_horizons", [1, 3, 5, 10, 20])),
-            min_cross_section_count=int(raw.get("min_cross_section_count", 30)),
-        )
+    base = load_universe_config(path)
     return SampleConfig(
-        universe_name=data.get("universe", "main_board"),
+        universe_name=base.universe_name,
         start_date=start_date,
         end_date=end_date,
-        require_main_board=bool(data.get("exclude_non_main_board", True)),
-        exclude_st=bool(data.get("exclude_st", True)),
-        min_listing_days=int(data.get("min_listing_days", 250)),
-        min_amount=float(data.get("min_amount", 1_000_000.0)),
-        new_stock_window_days=int(data.get("new_stock_filter_days", 20)),
-        forward_horizons=tuple(int(x) for x in data.get("forward_horizons", [1, 3, 5, 10, 20])),
-        min_cross_section_count=int(data.get("min_cross_section_count", 30)),
+        require_main_board=base.require_main_board,
+        exclude_st=base.exclude_st,
+        min_listing_days=base.min_listing_days,
+        min_amount=base.min_amount,
+        new_stock_window_days=base.new_stock_window_days,
+        forward_horizons=base.forward_horizons,
+        min_cross_section_count=base.min_cross_section_count,
     )
 
 
 def _load_evaluation_config(path: Path, *, output_root: Path, report_root: Path) -> EvaluationConfig:
-    data = load_yaml_like(path)
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     evaluation = data.get("evaluation", {})
     preprocess = data.get("preprocess", {})
     winsorize = preprocess.get("winsorize", {})
@@ -364,12 +358,20 @@ def validate_registry_cmd(
 ) -> None:
     """Validate the factor registry schema and builtin references."""
     try:
-        registry = _call_public("load_factor_registry", path=registry_path, registry_path=registry_path)
+        settings = Settings().resolve_paths()
+        available_columns = get_daily_panel_columns(settings.duckdb_path) if settings.duckdb_path.exists() else None
+        registry = _call_public(
+            "load_factor_registry",
+            path=registry_path,
+            registry_path=registry_path,
+            available_columns=available_columns,
+        )
         result = _call_public(
             "validate_registry",
             registry=registry,
             path=registry_path,
             registry_path=registry_path,
+            available_columns=available_columns,
         )
         errors = _normalize_validation_errors(result)
         if errors:

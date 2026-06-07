@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ashare_factor.models import SampleConfig, load_yaml_like
+import yaml
+
+from ashare_factor.models import SampleConfig
 
 
 DEFAULT_UNIVERSE_PATH = Path("configs/universe.yaml")
@@ -12,7 +14,7 @@ def load_universe_config(
     path: str | Path = DEFAULT_UNIVERSE_PATH,
     universe_name: str | None = None,
 ) -> SampleConfig:
-    payload = load_yaml_like(path)
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     default_universe = universe_name or payload.get("default_universe")
     universes = payload.get("universes", {})
     if not default_universe or default_universe not in universes:
@@ -24,7 +26,7 @@ def load_universe_config(
         require_main_board=bool(raw.get("require_main_board", True)),
         exclude_st=bool(raw.get("exclude_st", True)),
         min_listing_days=int(raw.get("min_listing_days", 60)),
-        min_amount=float(raw.get("min_amount", 1_000_000.0)),
+        min_amount=float(raw["min_amount"]),
         new_stock_window_days=int(raw.get("new_stock_window_days", 20)),
         forward_horizons=horizons,
         min_cross_section_count=int(raw.get("min_cross_section_count", 30)),

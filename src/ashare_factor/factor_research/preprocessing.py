@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import yaml
 
 from factor_utils import (
     cross_sectional_zscore,
@@ -12,7 +13,7 @@ from factor_utils import (
     winsorize_mad,
 )
 
-from ashare_factor.models import EvaluationConfig, PreprocessConfig, SampleResult, load_yaml_like
+from ashare_factor.models import EvaluationConfig, PreprocessConfig, SampleResult
 
 
 DEFAULT_EVALUATION_PATH = Path("configs/evaluation.yaml")
@@ -34,10 +35,11 @@ def preprocess_factor(
         validate="one_to_one",
     ).sort_values(["trade_date", "ts_code"])
 
+    raw_coverage = float(merged["factor_value_raw"].notna().mean()) if len(merged) else 0.0
     if merged["factor_value_raw"].notna().sum() == 0:
-        raise ValueError("calculation yielded all NaN")
+        raise ValueError(f"calculation yielded all NaN (raw coverage={raw_coverage:.2%})")
     if merged["factor_value_raw"].dropna().nunique() == 1:
-        raise ValueError("constant factor values")
+        raise ValueError(f"constant factor values (raw coverage={raw_coverage:.2%}, unique_non_null=1)")
 
     merged["factor_value_winsorized"] = merged.groupby("trade_date")["factor_value_raw"].transform(
         lambda series: winsorize_mad(series, n=preprocess_config.winsorize_n_mad)
@@ -94,7 +96,7 @@ def _resolve_preprocess_config(
 
 
 def load_evaluation_config(path: str | Path = DEFAULT_EVALUATION_PATH) -> EvaluationConfig:
-    payload = load_yaml_like(path)
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     preprocess: dict[str, Any] = payload.get("preprocess", {})
     winsorize = preprocess.get("winsorize", {})
     return EvaluationConfig(

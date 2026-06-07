@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 from ashare_factor.factor_research.builtins import builtin_factor_ids
-from ashare_factor.models import DAILY_PANEL_FIELDS, FactorSpec, load_yaml_like
+from ashare_factor.models import FactorSpec
 
 
 DEFAULT_REGISTRY_PATH = Path("configs/factor_registry.yaml")
@@ -23,8 +25,12 @@ REQUIRED_FIELDS = {
 }
 
 
-def load_factor_registry(path: str | Path = DEFAULT_REGISTRY_PATH) -> dict[str, FactorSpec]:
-    payload = load_yaml_like(path)
+def load_factor_registry(
+    path: str | Path = DEFAULT_REGISTRY_PATH,
+    *,
+    available_columns: set[str] | None = None,
+) -> dict[str, FactorSpec]:
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     factors = payload.get("factors", [])
     registry: dict[str, FactorSpec] = {}
     builtin_ids = builtin_factor_ids()
@@ -44,7 +50,10 @@ def load_factor_registry(path: str | Path = DEFAULT_REGISTRY_PATH) -> dict[str, 
         implementation = str(raw["implementation"])
         if implementation.startswith("builtin:") and implementation not in builtin_ids:
             raise ValueError(f"{factor_id}: builtin implementation not found: {implementation}")
-        invalid_fields = sorted(set(raw["data_fields"]) - DAILY_PANEL_FIELDS)
+        if available_columns is not None:
+            invalid_fields = sorted(set(raw["data_fields"]) - available_columns)
+        else:
+            invalid_fields = []
         if invalid_fields:
             raise ValueError(f"{factor_id}: unknown daily_panel fields: {invalid_fields}")
         registry[factor_id] = FactorSpec(
@@ -64,9 +73,13 @@ def load_factor_registry(path: str | Path = DEFAULT_REGISTRY_PATH) -> dict[str, 
     return registry
 
 
-def validate_registry(path: str | Path = DEFAULT_REGISTRY_PATH) -> list[str]:
+def validate_registry(
+    path: str | Path = DEFAULT_REGISTRY_PATH,
+    *,
+    available_columns: set[str] | None = None,
+) -> list[str]:
     try:
-        load_factor_registry(path)
+        load_factor_registry(path, available_columns=available_columns)
     except Exception as exc:
         return [str(exc)]
     return []

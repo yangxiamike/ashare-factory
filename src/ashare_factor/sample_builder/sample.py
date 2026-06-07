@@ -7,7 +7,8 @@ import duckdb
 import pandas as pd
 
 from ashare_data.config import Settings
-from ashare_factor.models import DAILY_PANEL_FIELDS, DataSnapshot, SampleConfig, SampleResult
+from ashare_factor.data_access import get_daily_panel_columns
+from ashare_factor.models import DataSnapshot, SampleConfig, SampleResult
 from ashare_factor.sample_builder.forward_returns import build_forward_return_sql
 from ashare_factor.sample_builder.universe import (
     DEFAULT_UNIVERSE_PATH,
@@ -192,6 +193,11 @@ def _ensure_daily_panel_columns(con: duckdb.DuckDBPyConnection) -> None:
     missing = REQUIRED_SAMPLE_COLUMNS - available
     if missing:
         raise ValueError(f"daily_panel missing required columns: {sorted(missing)}")
-    unknown = REQUIRED_SAMPLE_COLUMNS - DAILY_PANEL_FIELDS
-    if unknown:
-        raise ValueError(f"Unexpected sample column contract drift: {sorted(unknown)}")
+
+
+def ensure_daily_panel_columns(duckdb_path: str | Path) -> set[str]:
+    available = get_daily_panel_columns(duckdb_path)
+    missing = REQUIRED_SAMPLE_COLUMNS - available
+    if missing:
+        raise ValueError(f"daily_panel missing required columns: {sorted(missing)}")
+    return available

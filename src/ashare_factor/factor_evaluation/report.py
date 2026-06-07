@@ -90,7 +90,8 @@ def _render_markdown(result: dict[str, Any]) -> str:
         "## Notes",
         "",
         "- Evaluation uses direction-adjusted metrics for gate decisions.",
-        "- Neutralization ordering is assumed to be z-score -> neutralize -> re-standardize from upstream preprocessing.",
+        "- 预处理顺序为 winsorize(MAD, n=3) -> cross-sectional zscore -> industry+size regression residual -> re-standardize。",
+        "- 中性化发生在 zscore 之后，回归 beta 反映的是标准化因子值与行业/市值暴露的关系。",
     ]
     return "\n".join(lines).strip() + "\n"
 
