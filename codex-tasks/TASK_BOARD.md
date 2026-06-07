@@ -15,7 +15,7 @@
 | 已解决 | 因子工厂 v1 方案文档 review 改进 | [tasks/2026-06-07-factor-factory-plan-review.md](tasks/2026-06-07-factor-factory-plan-review.md) | `9b1e305` / `377f612` / `db77638` | 三次修订 gate 口径：不把 6 个分析视角做成 6 个 gate 模块，压缩为 Validity / Research Evidence / Library Decision 三层。 |
 | 已解决 | 因子工厂 v1 四模块实现 | [tasks/2026-06-07-factor-factory-v1-implementation.md](tasks/2026-06-07-factor-factory-v1-implementation.md) | `91e1db4` | 新增 `ashare_factor` 闭环，串起样本、注册、计算、评价、gate、library 和 CLI；成交额阈值按 Tushare 千元单位换算。 |
 | 已解决 | 因子工厂 v1 评审修改 | [tasks/2026-06-07-factor-factory-v1-review-fixes.md](tasks/2026-06-07-factor-factory-v1-review-fixes.md) | `2090177` | 去掉手写 YAML 和静态字段表，补齐 DuckDB 因子/评价入库、noise baseline 与 duckdb_path 透传；simple technical baseline 先保留占位。 |
-| 待处理 | 数据偏差修复：幸存者偏差 + 上市天数 + 停牌 | [tasks/2026-06-07-survivorship-bias-fixes.md](tasks/2026-06-07-survivorship-bias-fixes.md) | - | - |
+| 已解决 | 数据偏差修复：幸存者偏差 + 上市天数 + 停牌 | [tasks/2026-06-07-survivorship-bias-fixes.md](tasks/2026-06-07-survivorship-bias-fixes.md) | `5133509` | `stock_basic` 改为全量拉取，`list_date` 下推到 panel 并改用自然日上市天数，旧版 loader 不再提前删除停牌行。 |
 
 ## 使用规则
 

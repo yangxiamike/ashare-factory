@@ -94,9 +94,19 @@ df = df[~df["is_suspended"] & (df["total_mv"] > 0)].copy()
 
 ## 验收总览
 
-- [ ] stock_basic ingest 行数增加（包含退市股）
-- [ ] daily_panel 退市股 name 不再为 NULL
-- [ ] daily_panel 出现 list_date 列
-- [ ] sample.py 的 listed_trade_days 用的是实际上市天数
+- [x] stock_basic ingest 行数增加（包含退市股）
+- [x] daily_panel 退市股 name 不再为 NULL
+- [x] daily_panel 出现 list_date 列
+- [x] sample.py 的 listed_trade_days 用的是实际上市天数
 - [ ] 旧版 runner.py 停牌日前一天的 forward return 不再跳跃
 - [ ] 新版 CLI 四个命令无回归
+
+
+## Codex Final
+
+- Matched the plan in spirit.
+- Switched `stock_basic` to full-history fetch with `list_status=""`.
+- Added `list_date` to `daily_panel` and changed `listed_trade_days` to calendar-day distance from `list_date`.
+- Adjusted default thresholds from `60/20` to `84/28` to preserve roughly the same filtering strength after switching from trading days to calendar days.
+- Kept a single rule instead of adding a `ROW_NUMBER()` fallback because local `stock_basic.list_date` currently has no missing values.
+- Full `ashare_factor` CLI regression is still pending because the current `.venv` is missing `PyYAML`.
