@@ -385,8 +385,7 @@ def evaluate_factor_cmd(
     output_root: Path = typer.Option(
         _default_output_root(),
         "--output-root",
-        "--result-root",
-        help="Root directory for factor-factory outputs. `--result-root` is kept as a legacy alias.",
+        help="Root directory for factor-factory outputs.",
     ),
     report_root: Path = typer.Option(
         _default_report_root(),
@@ -433,8 +432,7 @@ def evaluate_all_cmd(
     output_root: Path = typer.Option(
         _default_output_root(),
         "--output-root",
-        "--result-root",
-        help="Root directory for factor-factory outputs. `--result-root` is kept as a legacy alias.",
+        help="Root directory for factor-factory outputs.",
     ),
     report_root: Path = typer.Option(
         _default_report_root(),
