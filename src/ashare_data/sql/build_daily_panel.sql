@@ -13,6 +13,22 @@ WITH industry_history AS (
         CAST(is_new AS VARCHAR) AS is_new
     FROM index_member_all
 ),
+industry_history_first AS (
+    SELECT
+        ts_code,
+        arg_min(con_name, in_date) AS con_name,
+        arg_min(l1_code, in_date) AS l1_code,
+        arg_min(l1_name, in_date) AS l1_name,
+        arg_min(l2_code, in_date) AS l2_code,
+        arg_min(l2_name, in_date) AS l2_name,
+        arg_min(l3_code, in_date) AS l3_code,
+        arg_min(l3_name, in_date) AS l3_name,
+        MIN(in_date) AS in_date,
+        arg_min(out_date, in_date) AS out_date,
+        arg_min(is_new, in_date) AS is_new
+    FROM industry_history
+    GROUP BY ts_code
+),
 suspend_flags AS (
     SELECT
         ts_code,
@@ -61,16 +77,16 @@ SELECT
     COALESCE(sf.is_suspended, FALSE) AS is_suspended,
     sf.suspend_type,
     sf.suspend_timing,
-    ih.con_name AS sw_member_name,
-    ih.l1_code AS sw_l1_code,
-    ih.l1_name AS sw_l1_name,
-    ih.l2_code AS sw_l2_code,
-    ih.l2_name AS sw_l2_name,
-    ih.l3_code AS sw_l3_code,
-    ih.l3_name AS sw_l3_name,
-    ih.in_date AS sw_in_date,
-    ih.out_date AS sw_out_date,
-    ih.is_new AS sw_is_new
+    COALESCE(ih.con_name, ihf.con_name) AS sw_member_name,
+    COALESCE(ih.l1_code, ihf.l1_code) AS sw_l1_code,
+    COALESCE(ih.l1_name, ihf.l1_name) AS sw_l1_name,
+    COALESCE(ih.l2_code, ihf.l2_code) AS sw_l2_code,
+    COALESCE(ih.l2_name, ihf.l2_name) AS sw_l2_name,
+    COALESCE(ih.l3_code, ihf.l3_code) AS sw_l3_code,
+    COALESCE(ih.l3_name, ihf.l3_name) AS sw_l3_name,
+    COALESCE(ih.in_date, ihf.in_date) AS sw_in_date,
+    COALESCE(ih.out_date, ihf.out_date) AS sw_out_date,
+    COALESCE(ih.is_new, ihf.is_new) AS sw_is_new
 FROM daily d
 LEFT JOIN stock_basic sb
     ON d.ts_code = sb.ts_code
@@ -90,8 +106,12 @@ LEFT JOIN industry_history ih
     ON d.ts_code = ih.ts_code
     AND d.trade_date >= ih.in_date
     AND (ih.out_date IS NULL OR ih.out_date = '' OR d.trade_date < ih.out_date)
+LEFT JOIN industry_history_first ihf
+    ON d.ts_code = ihf.ts_code
+    AND d.trade_date < ihf.in_date
 WHERE (? IS NULL OR d.trade_date >= ?)
   AND (? IS NULL OR d.trade_date <= ?)
+  AND (sb.list_date IS NULL OR sb.list_date = '' OR d.trade_date >= sb.list_date)
 QUALIFY row_number() OVER (
     PARTITION BY d.trade_date, d.ts_code
     ORDER BY

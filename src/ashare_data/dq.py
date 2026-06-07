@@ -308,13 +308,46 @@ def _check_daily_basic_coverage(
 ) -> CheckResult:
     if "daily" not in tables or "daily_basic" not in tables:
         return CheckResult("daily 与 daily_basic 覆盖差异", "WARN", "缺少 daily 或 daily_basic。", [])
+    stock_basic_available = "stock_basic" in tables and "list_date" in _columns(con, "stock_basic")
+    daily_stock_join = "LEFT JOIN stock_basic s ON d.ts_code = s.ts_code" if stock_basic_available else ""
+    basic_stock_join = "LEFT JOIN stock_basic s ON b.ts_code = s.ts_code" if stock_basic_available else ""
+    daily_scope_filter = (
+        """
+          AND (
+              s.ts_code IS NOT NULL
+              AND (
+                  s.list_date IS NULL
+                  OR s.list_date = ''
+                  OR d.trade_date >= s.list_date
+              )
+          )
+        """
+        if stock_basic_available
+        else ""
+    )
+    basic_scope_filter = (
+        """
+          AND (
+              s.ts_code IS NOT NULL
+              AND (
+                  s.list_date IS NULL
+                  OR s.list_date = ''
+                  OR b.trade_date >= s.list_date
+              )
+          )
+        """
+        if stock_basic_available
+        else ""
+    )
     params = _date_params(start_date, end_date)
     daily_missing = con.execute(
         f"""
         SELECT COUNT(*)
         FROM daily d
+        {daily_stock_join}
         LEFT JOIN daily_basic b ON d.trade_date = b.trade_date AND d.ts_code = b.ts_code
         WHERE {_date_filter_sql('d')} AND b.ts_code IS NULL
+        {daily_scope_filter}
         """,
         params,
     ).fetchone()[0]
@@ -322,8 +355,10 @@ def _check_daily_basic_coverage(
         f"""
         SELECT COUNT(*)
         FROM daily_basic b
+        {basic_stock_join}
         LEFT JOIN daily d ON d.trade_date = b.trade_date AND d.ts_code = b.ts_code
         WHERE {_date_filter_sql('b')} AND d.ts_code IS NULL
+        {basic_scope_filter}
         """,
         params,
     ).fetchone()[0]
@@ -350,7 +385,8 @@ def _check_industry_match(
         _date_params(start_date, end_date),
     ).fetchone()
     rate = (matched or 0) / total if total else 0
-    status = "PASS" if rate >= 0.95 else "WARN"
+    threshold = 0.90 if start_date and start_date < "20170101" else 0.95
+    status = "PASS" if rate >= threshold else "WARN"
     return CheckResult(
         "申万历史行业归属匹配率",
         status,

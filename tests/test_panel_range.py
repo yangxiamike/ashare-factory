@@ -98,3 +98,36 @@ def test_build_panel_range_rebuilds_full_table_when_schema_changes(tmp_path: Pat
 
     assert "sw_l1_name" in columns
     assert total_rows == 2
+
+
+def test_build_panel_excludes_rows_before_list_date(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    initialize_warehouse(settings)
+    replace_table(
+        settings,
+        "stock_basic",
+        pd.DataFrame([{"ts_code": "920489.BJ", "name": "Test", "market": "北交所", "list_date": "20200727"}]),
+    )
+    replace_table(
+        settings,
+        "daily",
+        pd.DataFrame(
+            [
+                {"ts_code": "920489.BJ", "trade_date": "20140618", "open": 10.88, "high": 10.88, "low": 10.88, "close": 10.81},
+                {"ts_code": "920489.BJ", "trade_date": "20200803", "open": 10.88, "high": 10.88, "low": 10.81, "close": 10.81},
+            ]
+        ),
+    )
+    replace_table(settings, "adj_factor", pd.DataFrame())
+    replace_table(settings, "daily_basic", pd.DataFrame())
+    replace_table(settings, "stk_limit", pd.DataFrame())
+    replace_table(settings, "suspend_d", pd.DataFrame())
+    replace_table(settings, "index_classify", pd.DataFrame())
+    replace_table(settings, "index_member_all", pd.DataFrame())
+
+    assert build_daily_panel(settings) == 1
+
+    with connect(settings) as con:
+        rows = con.execute("SELECT trade_date FROM daily_panel ORDER BY trade_date").fetchall()
+
+    assert rows == [("20200803",)]

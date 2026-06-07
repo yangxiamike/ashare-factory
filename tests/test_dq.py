@@ -213,3 +213,45 @@ def test_primary_key_duplicate_check_flags_duplicate_groups(tmp_path: Path) -> N
 
     assert "FAIL 主键重复检查" in content
     assert "发现重复主键: `daily`=1" in content
+
+
+def test_daily_basic_coverage_ignores_rows_before_list_date(tmp_path: Path) -> None:
+    db_path = tmp_path / "warehouse.duckdb"
+    _prepare_database(db_path)
+    with duckdb.connect(str(db_path)) as con:
+        con.execute(
+            """
+            CREATE TABLE stock_basic (
+                ts_code VARCHAR,
+                symbol VARCHAR,
+                name VARCHAR,
+                area VARCHAR,
+                industry VARCHAR,
+                market VARCHAR,
+                list_date VARCHAR,
+                act_name VARCHAR,
+                act_ent_type VARCHAR
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO stock_basic VALUES
+            ('920489.BJ', '920489', 'Test', NULL, NULL, '北交所', '20200727', NULL, NULL)
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO daily VALUES
+            ('920489.BJ', '20140618', 10.88, 10.88, 10.88, 10.81, 100, 100)
+            """
+        )
+
+    report_path = run_quality_checks(
+        _settings(tmp_path, db_path),
+        start_date="20140618",
+        end_date="20140618",
+    )
+    content = report_path.read_text(encoding="utf-8")
+
+    assert "- `daily` has rows missing in `daily_basic`: `0`" in content

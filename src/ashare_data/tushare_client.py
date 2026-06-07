@@ -70,12 +70,20 @@ class TushareClient:
         return self.recent_trade_calendar(days=days, lookback_days=lookback_days)[1]
 
     def stock_basic(self) -> pd.DataFrame:
-        return self._call_with_retry(
-            self._pro.stock_basic,
-            exchange="",
-            list_status="",
-            fields="ts_code,symbol,name,area,industry,market,list_date,act_name,act_ent_type",
-        )
+        fields = "ts_code,symbol,name,area,industry,market,list_date,act_name,act_ent_type"
+        frames = [
+            self._call_with_retry(
+                self._pro.stock_basic,
+                exchange="",
+                list_status=list_status,
+                fields=fields,
+            )
+            for list_status in ("L", "D", "P")
+        ]
+        frames = [frame for frame in frames if not frame.empty]
+        if not frames:
+            return pd.DataFrame(columns=fields.split(","))
+        return pd.concat(frames, ignore_index=True).drop_duplicates(subset=["ts_code"], ignore_index=True)
 
     def daily(self, trade_date: str) -> pd.DataFrame:
         return self._call_with_retry(self._pro.daily, trade_date=trade_date)
