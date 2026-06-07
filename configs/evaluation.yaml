@@ -1,0 +1,132 @@
+preprocess:
+  winsorize:
+    method: mad
+    n_mad: 3.0
+    limits: [0.01, 0.99]
+  neutralize: industry_size
+  re_standardize_after_neutralize: true
+
+evaluation:
+  n_quantiles: 5
+  primary_horizon: 5
+  rebalance_days: 5
+  weighting: equal
+  one_way_cost: 0.001
+  min_cross_section_count: 30
+  rolling_ic_window: 252
+
+gate:
+  hard:
+    - metric: mean_rank_ic
+      operator: ">"
+      threshold: 0.0
+      reason_on_fail: "IC方向错误或零预测能力"
+    - metric: coverage_pct
+      operator: ">"
+      threshold: 0.3
+      reason_on_fail: "因子覆盖率不足，样本偏差严重"
+    - metric: n_valid_dates
+      operator: ">"
+      threshold: 60
+      reason_on_fail: "有效交易日过少，统计不可靠"
+
+  soft:
+    metrics:
+      mean_rank_ic:
+        weight: 0.20
+        scoring:
+          0.00: 0
+          0.01: 3
+          0.02: 5
+          0.03: 7
+          0.05: 9
+          0.07: 10
+
+      ic_ir:
+        weight: 0.20
+        scoring:
+          0.0: 0
+          0.2: 3
+          0.3: 5
+          0.5: 7
+          0.8: 9
+          1.0: 10
+
+      win_rate:
+        weight: 0.10
+        scoring:
+          0.48: 0
+          0.50: 2
+          0.52: 4
+          0.55: 6
+          0.58: 8
+          0.60: 10
+
+      long_short_sharpe:
+        weight: 0.15
+        scoring:
+          0.0: 0
+          0.3: 3
+          0.5: 5
+          0.8: 7
+          1.2: 9
+          1.5: 10
+
+      mean_turnover:
+        weight: 0.10
+        scoring:
+          0.5: 0
+          0.4: 2
+          0.3: 4
+          0.2: 7
+          0.1: 9
+          0.05: 10
+
+      is_monotonic:
+        weight: 0.10
+        scoring:
+          false: 0
+          true: 10
+
+      pct_abs_t_gt_2:
+        weight: 0.10
+        scoring:
+          0.0: 0
+          0.2: 3
+          0.3: 5
+          0.4: 7
+          0.5: 10
+
+      ic_half_life:
+        weight: 0.05
+        scoring:
+          0: 0
+          2: 3
+          3: 5
+          5: 7
+          10: 9
+          15: 10
+
+    decision:
+      active: "score >= 6.5"
+      watch: "score >= 4.0"
+
+    category_overrides:
+      momentum:
+        metrics:
+          mean_turnover:
+            weight: 0.15
+          win_rate:
+            weight: 0.08
+      reversal:
+        metrics:
+          win_rate:
+            weight: 0.05
+          long_short_sharpe:
+            weight: 0.20
+      volatility:
+        metrics:
+          is_monotonic:
+            weight: 0.05
+          ic_half_life:
+            weight: 0.10
