@@ -27,6 +27,7 @@ dev = [
 
 [project.scripts]
 ashare-data = "ashare_data.cli:app"
+ashare-factor = "ashare_factor.cli:app"
 
 [build-system]
 requires = ["setuptools>=68"]

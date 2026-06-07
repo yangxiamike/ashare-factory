@@ -9,4 +9,5 @@ build/
 dist/
 data/
 reports/
+outputs/
 .claude/

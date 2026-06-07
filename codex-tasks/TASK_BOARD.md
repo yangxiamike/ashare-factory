@@ -13,6 +13,7 @@
 | 已解决 | 累积收益重叠复利 bug | [tasks/2026-06-01-cumulative-return-bug.md](tasks/2026-06-01-cumulative-return-bug.md) | `f6a9644` | 统一改为按 5 日调仓步长累计，并同步修正 notebook 图表、回撤和记分卡口径 |
 | 已解决 | 新建 factor_eval 评估引擎 + 02 notebook | [tasks/2026-06-01-factor-eval-engine.md](tasks/2026-06-01-factor-eval-engine.md) | `a29d791` | 按原规格抽出 `factor_eval` 引擎和标准图表，02 notebook 使用 PIT forward-fill 指数成分股口径跑四个 universe 对比 |
 | 已解决 | 因子工厂 v1 方案文档 review 改进 | [tasks/2026-06-07-factor-factory-plan-review.md](tasks/2026-06-07-factor-factory-plan-review.md) | `9b1e305` / `377f612` / `db77638` | 三次修订 gate 口径：不把 6 个分析视角做成 6 个 gate 模块，压缩为 Validity / Research Evidence / Library Decision 三层。 |
+| 已解决 | 因子工厂 v1 四模块实现 | [tasks/2026-06-07-factor-factory-v1-implementation.md](tasks/2026-06-07-factor-factory-v1-implementation.md) | 本次 commit | 新增 `ashare_factor` 闭环，串起样本、注册、计算、评价、gate、library 和 CLI；成交额阈值按 Tushare 千元单位换算。 |
 
 ## 使用规则
 

@@ -1,0 +1,528 @@
+from __future__ import annotations
+
+import inspect
+import json
+from importlib import import_module
+from pathlib import Path
+from typing import Any, Iterable
+
+import typer
+
+from ashare_data.config import Settings
+from ashare_factor.factor_evaluation.metrics import sanitize_for_json
+from ashare_factor.models import EvaluationConfig, PreprocessConfig, SampleConfig, load_yaml_like
+
+app = typer.Typer(help="A-share factor factory CLI.")
+
+_PUBLIC_API_MODULES: dict[str, tuple[str, ...]] = {
+    "load_factor_registry": ("ashare_factor.factor_research.registry",),
+    "validate_registry": ("ashare_factor.factor_research.registry",),
+    "build_sample": ("ashare_factor.sample_builder.sample",),
+    "calculate_factor": ("ashare_factor.factor_research.calculator",),
+    "preprocess_factor": ("ashare_factor.factor_research.preprocessing",),
+    "evaluate_factor": ("ashare_factor.factor_evaluation.evaluator",),
+    "apply_gate": ("ashare_factor.factor_evaluation.gate",),
+    "update_factor_library": ("ashare_factor.factor_evaluation.library",),
+    "write_evaluation_report": ("ashare_factor.factor_evaluation.report",),
+}
+
+
+def _fail(exc: Exception | str) -> None:
+    message = str(exc)
+    typer.secho(f"ERROR: {message}", fg=typer.colors.RED, err=True)
+    raise typer.Exit(code=1)
+
+
+def _project_root() -> Path:
+    return Path.cwd()
+
+
+def _resolve_public_function(name: str):
+    package = import_module("ashare_factor")
+    candidate = getattr(package, name, None)
+    if callable(candidate):
+        return candidate
+
+    for module_name in _PUBLIC_API_MODULES.get(name, ()):
+        try:
+            module = import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        candidate = getattr(module, name, None)
+        if callable(candidate):
+            return candidate
+
+    raise RuntimeError(
+        f"missing required factor factory API: {name}. "
+        "Please merge Worker A/B factor factory modules before using this CLI."
+    )
+
+
+def _call_public(name: str, **kwargs: Any) -> Any:
+    fn = _resolve_public_function(name)
+    signature = inspect.signature(fn)
+    accepts_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+    if accepts_kwargs:
+        return fn(**kwargs)
+
+    filtered_kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+    return fn(**filtered_kwargs)
+
+
+def _coerce_registry_entries(registry: Any) -> list[Any]:
+    if registry is None:
+        return []
+    if isinstance(registry, dict):
+        for key in ("factors", "items", "registry"):
+            value = registry.get(key)
+            if isinstance(value, list):
+                return value
+        return list(registry.values())
+    if isinstance(registry, list):
+        return registry
+    if isinstance(registry, tuple):
+        return list(registry)
+    if hasattr(registry, "factors"):
+        return list(getattr(registry, "factors"))
+    raise RuntimeError("unsupported factor registry format")
+
+
+def _get_value(obj: Any, field: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(field, default)
+    return getattr(obj, field, default)
+
+
+def _find_factor_spec(registry: Any, factor_id: str) -> Any:
+    if isinstance(registry, dict) and factor_id in registry:
+        return registry[factor_id]
+    for item in _coerce_registry_entries(registry):
+        if _get_value(item, "factor_id") == factor_id:
+            return item
+    raise RuntimeError(f"factor_id not found in registry: {factor_id}")
+
+
+def _normalize_validation_errors(result: Any) -> list[str]:
+    if result is None or result is True:
+        return []
+    if result is False:
+        return ["registry validation failed"]
+    if isinstance(result, str):
+        return [result]
+    if isinstance(result, list):
+        return [str(item) for item in result]
+    if isinstance(result, tuple):
+        return [str(item) for item in result]
+    if isinstance(result, dict):
+        errors = result.get("errors")
+        if errors is None:
+            return []
+        if isinstance(errors, (list, tuple)):
+            return [str(item) for item in errors]
+        return [str(errors)]
+    if hasattr(result, "errors"):
+        errors = getattr(result, "errors")
+        if errors is None:
+            return []
+        if isinstance(errors, (list, tuple)):
+            return [str(item) for item in errors]
+        return [str(errors)]
+    return []
+
+
+def _iter_output_paths(*values: Any) -> Iterable[Path]:
+    seen: set[Path] = set()
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, (str, Path)):
+            path = Path(value)
+            if path not in seen:
+                seen.add(path)
+                yield path
+            continue
+        if isinstance(value, dict):
+            candidates = [
+                value.get("result_path"),
+                value.get("report_path"),
+                value.get("library_path"),
+                value.get("output_path"),
+                value.get("path"),
+            ]
+            output_paths = value.get("output_paths")
+            if isinstance(output_paths, dict):
+                candidates.extend(output_paths.values())
+        else:
+            candidates = [
+                getattr(value, "result_path", None),
+                getattr(value, "report_path", None),
+                getattr(value, "library_path", None),
+                getattr(value, "output_path", None),
+                getattr(value, "path", None),
+            ]
+            output_paths = getattr(value, "output_paths", None)
+            if isinstance(output_paths, dict):
+                candidates.extend(output_paths.values())
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            path = Path(candidate)
+            if path not in seen:
+                seen.add(path)
+                yield path
+
+
+def _default_registry_path() -> Path:
+    return _project_root() / "configs" / "factor_registry.yaml"
+
+
+def _default_universe_path() -> Path:
+    return _project_root() / "configs" / "universe.yaml"
+
+
+def _default_evaluation_path() -> Path:
+    return _project_root() / "configs" / "evaluation.yaml"
+
+
+def _default_output_root() -> Path:
+    return _project_root() / "outputs"
+
+
+def _default_report_root() -> Path:
+    return _project_root() / "reports" / "factor_evaluation"
+
+
+def _default_library_path() -> Path:
+    return _default_output_root() / "factor_library" / "factor_library.json"
+
+
+def _default_result_root() -> Path:
+    return _default_output_root() / "evaluation_results"
+
+
+def _emit_result_summary(
+    factor_id: str,
+    evaluation_result: Any,
+    gate_decision: Any,
+    report_output: Any,
+    library_output: Any,
+) -> None:
+    status = _get_value(gate_decision, "status") or _get_value(evaluation_result, "status") or "unknown"
+    typer.echo(f"Evaluated factor: {factor_id}")
+    typer.echo(f"Gate status: {status}")
+
+    reasons = _get_value(gate_decision, "reasons") or _get_value(evaluation_result, "reasons") or []
+    if reasons:
+        for reason in reasons:
+            typer.echo(f"- {reason}")
+
+    for path in _iter_output_paths(evaluation_result, gate_decision, report_output, library_output):
+        typer.echo(f"Output: {path}")
+
+
+def _run_factor_pipeline(
+    factor_id: str,
+    *,
+    start_date: str | None,
+    end_date: str | None,
+    registry_path: Path,
+    universe_path: Path,
+    evaluation_path: Path,
+    duckdb_path: Path | None,
+    result_root: Path,
+    report_root: Path,
+    library_path: Path,
+) -> tuple[Any, Any, Any, Any]:
+    sample_config = _load_sample_config(universe_path, start_date=start_date, end_date=end_date)
+    evaluation_config = _load_evaluation_config(
+        evaluation_path,
+        output_root=result_root.parent,
+        report_root=report_root,
+    )
+    registry = _call_public("load_factor_registry", path=registry_path, registry_path=registry_path)
+    factor_spec = _find_factor_spec(registry, factor_id)
+    settings = Settings(duckdb_path=duckdb_path).resolve_paths() if duckdb_path else None
+    sample_result = _call_public(
+        "build_sample",
+        start_date=start_date,
+        end_date=end_date,
+        config=sample_config,
+        settings=settings,
+    )
+    factor_raw = _call_public("calculate_factor", factor=factor_spec, sample=sample_result)
+    factor_processed = _call_public(
+        "preprocess_factor",
+        factor_values=factor_raw,
+        sample=sample_result,
+        config=evaluation_config,
+    )
+    eval_frame = factor_processed.merge(
+        sample_result.sample,
+        on=["trade_date", "ts_code"],
+        how="inner",
+        validate="one_to_one",
+    )
+    evaluation_result = _call_public(
+        "evaluate_factor",
+        factor_df=eval_frame,
+        factor_spec=factor_spec,
+        evaluation_config=evaluation_config,
+        duckdb_path=(settings.duckdb_path if settings else None),
+        registry_path=registry_path,
+        universe_path=universe_path,
+        evaluation_path=evaluation_path,
+        output_root=result_root.parent,
+        persist_json=False,
+    )
+    report_output = _call_public("write_evaluation_report", eval_result=evaluation_result)
+    library_output = _call_public("update_factor_library", eval_result=evaluation_result, library_path=library_path)
+    _write_result_json(evaluation_result)
+    return evaluation_result, evaluation_result.get("gate_decision", {}), report_output, library_output
+
+
+def _write_result_json(evaluation_result: dict[str, Any]) -> Path:
+    path = Path(evaluation_result["output_paths"]["evaluation_result_json"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(sanitize_for_json(evaluation_result), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _load_sample_config(path: Path, *, start_date: str | None, end_date: str | None) -> SampleConfig:
+    data = load_yaml_like(path)
+    if "universes" in data:
+        universe_name = data.get("default_universe")
+        raw = data["universes"][universe_name]
+        return SampleConfig(
+            universe_name=universe_name,
+            start_date=start_date,
+            end_date=end_date,
+            require_main_board=bool(raw.get("require_main_board", True)),
+            exclude_st=bool(raw.get("exclude_st", True)),
+            min_listing_days=int(raw.get("min_listing_days", 60)),
+            min_amount=float(raw.get("min_amount", 1_000_000.0)),
+            new_stock_window_days=int(raw.get("new_stock_window_days", 20)),
+            forward_horizons=tuple(int(x) for x in raw.get("forward_horizons", [1, 3, 5, 10, 20])),
+            min_cross_section_count=int(raw.get("min_cross_section_count", 30)),
+        )
+    return SampleConfig(
+        universe_name=data.get("universe", "main_board"),
+        start_date=start_date,
+        end_date=end_date,
+        require_main_board=bool(data.get("exclude_non_main_board", True)),
+        exclude_st=bool(data.get("exclude_st", True)),
+        min_listing_days=int(data.get("min_listing_days", 250)),
+        min_amount=float(data.get("min_amount", 1_000_000.0)),
+        new_stock_window_days=int(data.get("new_stock_filter_days", 20)),
+        forward_horizons=tuple(int(x) for x in data.get("forward_horizons", [1, 3, 5, 10, 20])),
+        min_cross_section_count=int(data.get("min_cross_section_count", 30)),
+    )
+
+
+def _load_evaluation_config(path: Path, *, output_root: Path, report_root: Path) -> EvaluationConfig:
+    data = load_yaml_like(path)
+    evaluation = data.get("evaluation", {})
+    preprocess = data.get("preprocess", {})
+    winsorize = preprocess.get("winsorize", {})
+    return EvaluationConfig(
+        preprocess=PreprocessConfig(
+            winsorize_method=str(winsorize.get("method", "mad")),
+            winsorize_n_mad=float(winsorize.get("n_mad", 3.0)),
+            neutralize=str(preprocess.get("neutralize", "industry_size")),
+            re_standardize_after_neutralize=bool(preprocess.get("re_standardize_after_neutralize", True)),
+        ),
+        evaluation=evaluation,
+        gate=data.get("gate", {}),
+        output_root=output_root,
+        report_root=report_root,
+    )
+
+
+@app.command("list-factors")
+def list_factors(
+    registry_path: Path = typer.Option(_default_registry_path(), "--registry-path", help="Path to factor_registry.yaml."),
+) -> None:
+    """List factors registered in factor_registry.yaml."""
+    try:
+        registry = _call_public("load_factor_registry", path=registry_path, registry_path=registry_path)
+        items = _coerce_registry_entries(registry)
+        typer.echo(f"Registered factors: {len(items)}")
+        for item in items:
+            factor_id = _get_value(item, "factor_id", "<missing>")
+            direction = _get_value(item, "direction", "-")
+            status = _get_value(item, "status", "-")
+            typer.echo(f"{factor_id}\t{direction}\t{status}")
+    except Exception as exc:
+        _fail(exc)
+
+
+@app.command("validate-registry")
+def validate_registry_cmd(
+    registry_path: Path = typer.Option(_default_registry_path(), "--registry-path", help="Path to factor_registry.yaml."),
+) -> None:
+    """Validate the factor registry schema and builtin references."""
+    try:
+        registry = _call_public("load_factor_registry", path=registry_path, registry_path=registry_path)
+        result = _call_public(
+            "validate_registry",
+            registry=registry,
+            path=registry_path,
+            registry_path=registry_path,
+        )
+        errors = _normalize_validation_errors(result)
+        if errors:
+            typer.secho("Registry validation failed:", fg=typer.colors.RED, err=True)
+            for error in errors:
+                typer.echo(f"- {error}", err=True)
+            raise typer.Exit(code=1)
+        typer.echo(f"Registry valid: {registry_path}")
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _fail(exc)
+
+
+@app.command("evaluate-factor")
+def evaluate_factor_cmd(
+    factor_id: str = typer.Option(..., "--factor-id", help="Registered factor identifier."),
+    start_date: str | None = typer.Option(None, "--start-date", help="Inclusive start date, format YYYYMMDD."),
+    end_date: str | None = typer.Option(None, "--end-date", help="Inclusive end date, format YYYYMMDD."),
+    registry_path: Path = typer.Option(_default_registry_path(), "--registry-path", help="Path to factor_registry.yaml."),
+    universe_path: Path = typer.Option(_default_universe_path(), "--universe-path", help="Path to universe.yaml."),
+    evaluation_path: Path = typer.Option(
+        _default_evaluation_path(),
+        "--evaluation-path",
+        help="Path to evaluation.yaml.",
+    ),
+    duckdb_path: Path | None = typer.Option(None, "--duckdb-path", help="Path to DuckDB warehouse."),
+    result_root: Path = typer.Option(
+        _default_result_root(),
+        "--result-root",
+        help="Directory for evaluation result JSON files.",
+    ),
+    report_root: Path = typer.Option(
+        _default_report_root(),
+        "--report-root",
+        help="Directory for Markdown evaluation reports.",
+    ),
+    library_path: Path = typer.Option(
+        _default_library_path(),
+        "--library-path",
+        help="Path to factor_library.json.",
+    ),
+) -> None:
+    """Run the full single-factor factor-factory pipeline."""
+    try:
+        evaluation_result, gate_decision, report_output, library_output = _run_factor_pipeline(
+            factor_id,
+            start_date=start_date,
+            end_date=end_date,
+            registry_path=registry_path,
+            universe_path=universe_path,
+            evaluation_path=evaluation_path,
+            duckdb_path=duckdb_path,
+            result_root=result_root,
+            report_root=report_root,
+            library_path=library_path,
+        )
+        _emit_result_summary(factor_id, evaluation_result, gate_decision, report_output, library_output)
+    except Exception as exc:
+        _fail(exc)
+
+
+@app.command("evaluate-all")
+def evaluate_all_cmd(
+    start_date: str | None = typer.Option(None, "--start-date", help="Inclusive start date, format YYYYMMDD."),
+    end_date: str | None = typer.Option(None, "--end-date", help="Inclusive end date, format YYYYMMDD."),
+    registry_path: Path = typer.Option(_default_registry_path(), "--registry-path", help="Path to factor_registry.yaml."),
+    universe_path: Path = typer.Option(_default_universe_path(), "--universe-path", help="Path to universe.yaml."),
+    evaluation_path: Path = typer.Option(
+        _default_evaluation_path(),
+        "--evaluation-path",
+        help="Path to evaluation.yaml.",
+    ),
+    duckdb_path: Path | None = typer.Option(None, "--duckdb-path", help="Path to DuckDB warehouse."),
+    result_root: Path = typer.Option(
+        _default_result_root(),
+        "--result-root",
+        help="Directory for evaluation result JSON files.",
+    ),
+    report_root: Path = typer.Option(
+        _default_report_root(),
+        "--report-root",
+        help="Directory for Markdown evaluation reports.",
+    ),
+    library_path: Path = typer.Option(
+        _default_library_path(),
+        "--library-path",
+        help="Path to factor_library.json.",
+    ),
+) -> None:
+    """Run the factor-factory pipeline for all registered factors."""
+    try:
+        registry = _call_public("load_factor_registry", path=registry_path, registry_path=registry_path)
+        items = _coerce_registry_entries(registry)
+        if not items:
+            typer.echo("No registered factors found.")
+            return
+
+        for item in items:
+            factor_id = _get_value(item, "factor_id", "<missing>")
+            typer.echo(f"==> {factor_id}")
+            evaluation_result, gate_decision, report_output, library_output = _run_factor_pipeline(
+                factor_id,
+                start_date=start_date,
+                end_date=end_date,
+                registry_path=registry_path,
+                universe_path=universe_path,
+                evaluation_path=evaluation_path,
+                duckdb_path=duckdb_path,
+                result_root=result_root,
+                report_root=report_root,
+                library_path=library_path,
+            )
+            _emit_result_summary(factor_id, evaluation_result, gate_decision, report_output, library_output)
+    except Exception as exc:
+        _fail(exc)
+
+
+@app.command("show-result")
+def show_result_cmd(
+    factor_id: str = typer.Option(..., "--factor-id", help="Factor identifier."),
+    result_root: Path = typer.Option(
+        _default_result_root(),
+        "--result-root",
+        help="Directory containing evaluation result JSON files.",
+    ),
+) -> None:
+    """Show the latest saved evaluation_result.json for a factor."""
+    try:
+        matches = sorted(result_root.glob(f"{factor_id}_*.json"))
+        if not matches:
+            raise RuntimeError(f"no saved evaluation result found for {factor_id} in {result_root}")
+
+        target = matches[-1]
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        typer.echo(f"Result file: {target}")
+
+        status = payload.get("status") or _get_value(payload.get("gate_decision", {}), "status")
+        if status:
+            typer.echo(f"Gate status: {status}")
+
+        summary_fields = ("mean_rank_ic", "ic_ir", "coverage_pct", "long_short_sharpe")
+        for field in summary_fields:
+            if field in payload:
+                typer.echo(f"{field}: {payload[field]}")
+
+        reasons = payload.get("reasons") or _get_value(payload.get("gate_decision", {}), "reasons", [])
+        if reasons:
+            for reason in reasons:
+                typer.echo(f"- {reason}")
+    except Exception as exc:
+        _fail(exc)
+
+
+if __name__ == "__main__":
+    app()

@@ -1,0 +1,43 @@
+factors:
+  -
+    factor_id: momentum_20d_v1
+    factor_name: 20日动量
+    category: price_momentum
+    formula_text: adj_close[t] / adj_close[t-20] - 1
+    implementation: builtin:momentum_return
+    params:
+      window: 20
+    direction: positive
+    lookback_days: 20
+    data_fields: [close, adj_factor]
+    status: candidate
+    description: 过去20个交易日的复权价格动量
+    hypothesis: 中短期强势股在未来短窗口内延续相对收益
+  -
+    factor_id: reversal_5d_v1
+    factor_name: 5日反转
+    category: price_reversal
+    formula_text: adj_close[t] / adj_close[t-5] - 1
+    implementation: builtin:short_term_return
+    params:
+      window: 5
+    direction: negative
+    lookback_days: 5
+    data_fields: [close, adj_factor]
+    status: candidate
+    description: 过去5个交易日的短期收益率
+    hypothesis: 短期涨跌存在均值回归，近期涨幅越大后续越弱
+  -
+    factor_id: volatility_20d_v1
+    factor_name: 20日波动率
+    category: risk
+    formula_text: rolling_std(adj_close[t] / adj_close[t-1] - 1, 20)
+    implementation: builtin:rolling_volatility
+    params:
+      window: 20
+    direction: negative
+    lookback_days: 20
+    data_fields: [close, adj_factor]
+    status: candidate
+    description: 过去20个交易日复权收益率的滚动波动率
+    hypothesis: 短期高波动股票后续风险补偿不足，未来收益相对更弱
