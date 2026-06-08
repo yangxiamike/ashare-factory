@@ -10,8 +10,10 @@ import pandas as pd
 from ashare_data.config import Settings
 from ashare_data.constants import BROAD_INDEX_CODES
 from ashare_data.storage import (
+    connect,
     has_successful_ingest,
     initialize_warehouse,
+    load_successful_ingest_partitions,
     record_ingest_status,
     replace_table,
     upsert_index_weight_table,
@@ -98,6 +100,33 @@ def _persist(settings: Settings, endpoint: str, frame: pd.DataFrame) -> int:
     return replace_table(settings, endpoint, frame)
 
 
+def _refresh_static_tables(
+    settings: Settings,
+    client: TushareClient,
+    limiter: RateLimiter,
+    retries: int,
+    *,
+    con,
+) -> dict[str, int]:
+    row_counts: dict[str, int] = {}
+    for endpoint in STATIC_ENDPOINTS:
+        frame = _call_with_retry(client, endpoint, limiter, retries)
+        write_raw(settings, endpoint, frame)
+        row_counts[endpoint] = replace_table(settings, endpoint, frame, con=con)
+        finished_at = datetime.now().isoformat(sep=" ", timespec="seconds")
+        record_ingest_status(
+            settings,
+            endpoint,
+            "ALL",
+            "success",
+            row_counts[endpoint],
+            started_at=finished_at,
+            finished_at=finished_at,
+            con=con,
+        )
+    return row_counts
+
+
 def ingest_recent(settings: Settings, days: int = 5) -> IngestResult:
     settings = settings.resolve_paths()
     initialize_warehouse(settings)
@@ -127,6 +156,7 @@ def ingest_history(
     rate_limit_per_minute: int = 0,
     force: bool = False,
     retries: int = 2,
+    refresh_static: bool = True,
 ) -> HistoryIngestResult:
     settings = settings.resolve_paths()
     initialize_warehouse(settings)
@@ -145,67 +175,76 @@ def ingest_history(
         .sort_values()
         .tolist()
     )
-    upsert_trade_cal_table(settings, trade_cal)
-
-    row_counts: dict[str, int] = {"trade_cal": len(trade_cal), **{endpoint: 0 for endpoint in DAILY_ENDPOINTS}}
+    row_counts: dict[str, int] = {
+        "trade_cal": len(trade_cal),
+        **{endpoint: 0 for endpoint in STATIC_ENDPOINTS},
+        **{endpoint: 0 for endpoint in DAILY_ENDPOINTS},
+    }
     skipped: dict[str, int] = {endpoint: 0 for endpoint in DAILY_ENDPOINTS}
     failed: dict[str, int] = {endpoint: 0 for endpoint in DAILY_ENDPOINTS}
+    with connect(settings) as con:
+        upsert_trade_cal_table(settings, trade_cal, con=con)
+        if refresh_static:
+            row_counts.update(_refresh_static_tables(settings, client, limiter, retries, con=con))
+        successful_partitions = set()
+        if not force:
+            successful_partitions = load_successful_ingest_partitions(
+                settings,
+                DAILY_ENDPOINTS,
+                start_date,
+                end_date,
+                con=con,
+            )
 
-    for endpoint in STATIC_ENDPOINTS:
-        frame = _call_with_retry(client, endpoint, limiter, retries)
-        write_raw(settings, endpoint, frame)
-        row_counts[endpoint] = replace_table(settings, endpoint, frame)
-        finished_at = datetime.now().isoformat(sep=" ", timespec="seconds")
-        record_ingest_status(
-            settings,
-            endpoint,
-            "ALL",
-            "success",
-            row_counts[endpoint],
-            started_at=finished_at,
-            finished_at=finished_at,
-        )
+        for trade_date in trade_dates:
+            for endpoint in DAILY_ENDPOINTS:
+                if not force and (endpoint, trade_date) in successful_partitions:
+                    skipped[endpoint] += 1
+                    continue
 
-    for trade_date in trade_dates:
-        for endpoint in DAILY_ENDPOINTS:
-            if not force and has_successful_ingest(settings, endpoint, trade_date):
-                skipped[endpoint] += 1
-                continue
-
-            started_at = datetime.now().isoformat(sep=" ", timespec="seconds")
-            try:
-                record_ingest_status(
-                    settings,
-                    endpoint,
-                    trade_date,
-                    "running",
-                    started_at=started_at,
-                    finished_at=started_at,
-                )
-                frame = _call_with_retry(client, endpoint, limiter, retries, trade_date)
-                raw_path = write_raw_partition(settings, endpoint, trade_date, frame)
-                row_counts[endpoint] += upsert_trade_date_table(settings, endpoint, trade_date, frame)
-                record_ingest_status(
-                    settings,
-                    endpoint,
-                    trade_date,
-                    "success",
-                    len(frame),
-                    raw_path,
-                    started_at=started_at,
-                    finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
-                )
-            except Exception as exc:
-                failed[endpoint] += 1
-                record_ingest_status(
-                    settings,
-                    endpoint,
-                    trade_date,
-                    "failed",
-                    error_message=str(exc),
-                    started_at=started_at,
-                    finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
-                )
+                started_at = datetime.now().isoformat(sep=" ", timespec="seconds")
+                try:
+                    record_ingest_status(
+                        settings,
+                        endpoint,
+                        trade_date,
+                        "running",
+                        started_at=started_at,
+                        finished_at=started_at,
+                        con=con,
+                    )
+                    frame = _call_with_retry(client, endpoint, limiter, retries, trade_date)
+                    raw_path = write_raw_partition(settings, endpoint, trade_date, frame)
+                    row_counts[endpoint] += upsert_trade_date_table(
+                        settings,
+                        endpoint,
+                        trade_date,
+                        frame,
+                        con=con,
+                    )
+                    record_ingest_status(
+                        settings,
+                        endpoint,
+                        trade_date,
+                        "success",
+                        len(frame),
+                        raw_path,
+                        started_at=started_at,
+                        finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
+                        con=con,
+                    )
+                except Exception as exc:
+                    failed[endpoint] += 1
+                    record_ingest_status(
+                        settings,
+                        endpoint,
+                        trade_date,
+                        "failed",
+                        error_message=str(exc),
+                        started_at=started_at,
+                        finished_at=datetime.now().isoformat(sep=" ", timespec="seconds"),
+                        con=con,
+                    )
 
     return HistoryIngestResult(
         trade_dates=trade_dates, row_counts=row_counts, skipped=skipped, failed=failed
@@ -332,6 +371,13 @@ def ingest_history_verbose(
     chunks = _month_chunks(start_date, end_date)
     chunk_results: list[HistoryChunkResult] = []
     started = monotonic()
+    settings = settings.resolve_paths()
+    initialize_warehouse(settings)
+    client = TushareClient(settings)
+    limiter = RateLimiter(rate_limit_per_minute)
+
+    with connect(settings) as con:
+        _refresh_static_tables(settings, client, limiter, retries, con=con)
 
     for index, (chunk_start, chunk_end) in enumerate(chunks, start=1):
         chunk_started = monotonic()
@@ -347,6 +393,7 @@ def ingest_history_verbose(
             rate_limit_per_minute=rate_limit_per_minute,
             force=force,
             retries=retries,
+            refresh_static=False,
         )
         elapsed = monotonic() - chunk_started
         chunk_results.append(

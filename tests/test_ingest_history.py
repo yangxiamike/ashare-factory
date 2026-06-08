@@ -35,7 +35,16 @@ class FakeTushareClient:
 
     def stock_basic(self) -> pd.DataFrame:
         self._count("stock_basic")
-        return pd.DataFrame([{"ts_code": "000001.SZ", "name": "Ping An Bank"}])
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "name": "Ping An Bank",
+                    "list_status": "L",
+                    "delist_date": None,
+                }
+            ]
+        )
 
     def index_classify(self) -> pd.DataFrame:
         self._count("index_classify")
@@ -196,6 +205,36 @@ def test_ingest_recent_upserts_daily_tables_without_dropping_history(
     assert adj_dates == expected
     assert basic_dates == expected
     assert limit_dates == expected
+
+
+def test_ingest_history_refetches_when_success_status_exists_but_raw_file_is_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import ashare_data.ingest as ingest_module
+
+    FakeTushareClient.reset()
+    monkeypatch.setattr(ingest_module, "TushareClient", FakeTushareClient)
+    settings = _settings(tmp_path)
+
+    ingest_history(
+        settings,
+        start_date="20260525",
+        end_date="20260526",
+        rate_limit_per_minute=0,
+    )
+    missing_partition = tmp_path / "data" / "raw" / "daily" / "trade_date=20260525" / "daily.parquet"
+    missing_partition.unlink()
+
+    second = ingest_history(
+        settings,
+        start_date="20260525",
+        end_date="20260526",
+        rate_limit_per_minute=0,
+    )
+
+    assert second.skipped["daily"] == 1
+    assert FakeTushareClient.calls["daily"] == 3
+    assert missing_partition.exists()
 
 
 def test_ingest_index_weight_is_idempotent_and_keeps_multiple_indexes(tmp_path: Path, monkeypatch) -> None:

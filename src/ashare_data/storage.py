@@ -18,6 +18,8 @@ EXPECTED_COLUMNS: dict[str, list[str]] = {
         "industry",
         "market",
         "list_date",
+        "list_status",
+        "delist_date",
         "act_name",
         "act_ent_type",
     ],
@@ -105,6 +107,14 @@ TEXT_COLUMNS: dict[str, list[str]] = {
     for endpoint, columns in EXPECTED_COLUMNS.items()
 }
 
+COLUMN_TYPES: dict[str, dict[str, str]] = {
+    endpoint: {
+        column: "DOUBLE" if column in NON_TEXT_COLUMNS.get(endpoint, set()) else "VARCHAR"
+        for column in columns
+    }
+    for endpoint, columns in EXPECTED_COLUMNS.items()
+}
+
 
 def resolved(settings: Settings) -> Settings:
     return settings.resolve_paths()
@@ -140,7 +150,7 @@ def normalize_frame(endpoint: str, frame: pd.DataFrame) -> pd.DataFrame:
 
 def _migrate_warehouse_schema(con: duckdb.DuckDBPyConnection) -> None:
     """Keep old DuckDB files compatible with the current expected schema."""
-    for table_name, columns in TEXT_COLUMNS.items():
+    for table_name, columns in COLUMN_TYPES.items():
         existing = {
             row[0]
             for row in con.execute(
@@ -152,8 +162,11 @@ def _migrate_warehouse_schema(con: duckdb.DuckDBPyConnection) -> None:
                 [table_name],
             ).fetchall()
         }
-        for column in columns:
-            if column in existing:
+        for column, column_type in columns.items():
+            if column not in existing:
+                con.execute(f"ALTER TABLE {table_name} ADD COLUMN {column} {column_type}")
+                continue
+            if column_type == "VARCHAR":
                 con.execute(f"ALTER TABLE {table_name} ALTER COLUMN {column} TYPE VARCHAR")
 
 
@@ -202,38 +215,60 @@ def has_raw_daily_partition(settings: Settings, endpoint: str, trade_date: str) 
     return raw_partition_path(settings, endpoint, trade_date).exists()
 
 
-def replace_table(settings: Settings, table_name: str, frame: pd.DataFrame) -> int:
+def replace_table(
+    settings: Settings,
+    table_name: str,
+    frame: pd.DataFrame,
+    *,
+    con: duckdb.DuckDBPyConnection | None = None,
+) -> int:
     frame = normalize_frame(table_name, frame)
-    with connect(settings) as con:
-        con.register("_frame", frame)
-        con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM _frame")
-        con.unregister("_frame")
+    if con is None:
+        with connect(settings) as own_con:
+            return replace_table(settings, table_name, frame, con=own_con)
+    con.register("_frame", frame)
+    con.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM _frame")
+    con.unregister("_frame")
     return len(frame)
 
 
-def upsert_trade_cal_table(settings: Settings, frame: pd.DataFrame) -> int:
+def upsert_trade_cal_table(
+    settings: Settings,
+    frame: pd.DataFrame,
+    *,
+    con: duckdb.DuckDBPyConnection | None = None,
+) -> int:
     frame = normalize_frame("trade_cal", frame)
     if frame.empty:
         return 0
-    with connect(settings) as con:
-        con.register("_frame", frame)
-        con.execute("DELETE FROM trade_cal WHERE cal_date IN (SELECT cal_date FROM _frame)")
-        con.execute("INSERT INTO trade_cal SELECT * FROM _frame")
-        con.unregister("_frame")
+    if con is None:
+        with connect(settings) as own_con:
+            return upsert_trade_cal_table(settings, frame, con=own_con)
+    con.register("_frame", frame)
+    con.execute("DELETE FROM trade_cal WHERE cal_date IN (SELECT cal_date FROM _frame)")
+    con.execute("INSERT INTO trade_cal SELECT * FROM _frame")
+    con.unregister("_frame")
     return len(frame)
 
 
 def upsert_trade_date_table(
-    settings: Settings, table_name: str, trade_date: str, frame: pd.DataFrame
+    settings: Settings,
+    table_name: str,
+    trade_date: str,
+    frame: pd.DataFrame,
+    *,
+    con: duckdb.DuckDBPyConnection | None = None,
 ) -> int:
     frame = normalize_frame(table_name, frame)
-    with connect(settings) as con:
-        con.execute(f"DELETE FROM {table_name} WHERE trade_date = ?", [trade_date])
-        if frame.empty:
-            return 0
-        con.register("_frame", frame)
-        con.execute(f"INSERT INTO {table_name} SELECT * FROM _frame")
-        con.unregister("_frame")
+    if con is None:
+        with connect(settings) as own_con:
+            return upsert_trade_date_table(settings, table_name, trade_date, frame, con=own_con)
+    con.execute(f"DELETE FROM {table_name} WHERE trade_date = ?", [trade_date])
+    if frame.empty:
+        return 0
+    con.register("_frame", frame)
+    con.execute(f"INSERT INTO {table_name} SELECT * FROM _frame")
+    con.unregister("_frame")
     return len(frame)
 
 
@@ -268,35 +303,50 @@ def record_ingest_status(
     *,
     started_at: str,
     finished_at: str,
+    con: duckdb.DuckDBPyConnection | None = None,
 ) -> None:
-    with connect(settings) as con:
-        con.execute(
-            """
-            DELETE FROM ingest_status
-            WHERE endpoint = ? AND trade_date = ?
-            """,
-            [endpoint, trade_date],
-        )
-        con.execute(
-            """
-            INSERT INTO ingest_status
-            VALUES (
-                ?, ?, ?, ?, ?, ?,
-                CAST(? AS TIMESTAMP),
-                CAST(? AS TIMESTAMP)
-            )
-            """,
-            [
+    if con is None:
+        with connect(settings) as own_con:
+            record_ingest_status(
+                settings,
                 endpoint,
                 trade_date,
                 status,
                 row_count,
-                str(raw_path or ""),
+                raw_path,
                 error_message,
-                started_at,
-                finished_at,
-            ],
+                started_at=started_at,
+                finished_at=finished_at,
+                con=own_con,
+            )
+            return
+    con.execute(
+        """
+        DELETE FROM ingest_status
+        WHERE endpoint = ? AND trade_date = ?
+        """,
+        [endpoint, trade_date],
+    )
+    con.execute(
+        """
+        INSERT INTO ingest_status
+        VALUES (
+            ?, ?, ?, ?, ?, ?,
+            CAST(? AS TIMESTAMP),
+            CAST(? AS TIMESTAMP)
         )
+        """,
+        [
+            endpoint,
+            trade_date,
+            status,
+            row_count,
+            str(raw_path or ""),
+            error_message,
+            started_at,
+            finished_at,
+        ],
+    )
 
 
 def has_successful_ingest(settings: Settings, endpoint: str, trade_date: str) -> bool:
@@ -310,6 +360,42 @@ def has_successful_ingest(settings: Settings, endpoint: str, trade_date: str) ->
             [endpoint, trade_date],
         ).fetchone()
     return bool(row and row[0] and Path(row[0]).exists())
+
+
+def load_successful_ingest_partitions(
+    settings: Settings,
+    endpoints: list[str],
+    start_date: str,
+    end_date: str,
+    *,
+    con: duckdb.DuckDBPyConnection | None = None,
+) -> set[tuple[str, str]]:
+    if not endpoints:
+        return set()
+    placeholders = ", ".join("?" for _ in endpoints)
+    query = f"""
+        SELECT endpoint, trade_date, raw_path
+        FROM ingest_status
+        WHERE status = 'success'
+          AND endpoint IN ({placeholders})
+          AND trade_date >= ?
+          AND trade_date <= ?
+    """
+    params = [*endpoints, start_date, end_date]
+    if con is None:
+        with connect(settings) as own_con:
+            return load_successful_ingest_partitions(
+                settings,
+                endpoints,
+                start_date,
+                end_date,
+                con=own_con,
+            )
+    return {
+        (str(endpoint), str(trade_date))
+        for endpoint, trade_date, raw_path in con.execute(query, params).fetchall()
+        if raw_path and Path(raw_path).exists()
+    }
 
 
 def load_raw_table(settings: Settings, endpoint: str) -> int:

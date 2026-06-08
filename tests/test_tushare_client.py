@@ -22,6 +22,8 @@ def test_stock_basic_fetches_all_statuses(monkeypatch) -> None:
     assert [item["list_status"] for item in captured] == ["L", "D", "P"]
     assert all(item["exchange"] == "" for item in captured)
     assert all("list_date" in item["fields"] for item in captured)
+    assert all("list_status" in item["fields"] for item in captured)
+    assert all("delist_date" in item["fields"] for item in captured)
     assert len(frame) == 3
 
 

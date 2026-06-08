@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS stock_basic (
     industry VARCHAR,
     market VARCHAR,
     list_date VARCHAR,
+    list_status VARCHAR,
+    delist_date VARCHAR,
     act_name VARCHAR,
     act_ent_type VARCHAR
 );
