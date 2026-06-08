@@ -1,0 +1,72 @@
+relevance_keywords:
+  - 降准
+  - 科技
+  - 算力
+  - 半导体
+  - 机器人
+  - 新能源
+  - 出海
+  - 景气
+  - 并购
+  - 回购
+
+keyword_weights:
+  降准: 2.5
+  科技: 1.8
+  算力: 2.0
+  半导体: 2.0
+  机器人: 1.6
+  新能源: 1.5
+  出海: 1.3
+  景气: 1.4
+  并购: 1.2
+  回购: 1.1
+
+category_rules:
+  macro:
+    - 降准
+    - 社融
+    - 流动性
+    - 稳增长
+  technology:
+    - 科技
+    - 算力
+    - 半导体
+    - 机器人
+  sectors:
+    - 新能源
+    - 出海
+    - 景气
+  capital_market:
+    - 并购
+    - 回购
+    - 增持
+
+category_weights:
+  macro: 1.6
+  technology: 1.4
+  sectors: 1.2
+  capital_market: 1.1
+  other: 1.0
+
+source_weights:
+  mock: 1.0
+  manual: 1.1
+  cctv: 1.2
+  cls: 1.1
+
+mock_news:
+  - title: "央行降准预期升温，市场关注流动性改善"
+    content: "流动性预期回暖，科技和券商方向受关注。"
+    source: "mock"
+    tags: ["宏观", "科技"]
+  - title: "半导体设备景气回升，算力链订单继续扩张"
+    content: "机构继续跟踪半导体、算力和国产替代。"
+    source: "mock"
+    tags: ["科技", "半导体"]
+  - title: "社区团购价格战复燃"
+    content: "这条用于测试 keyword relevance filter，会被过滤。"
+    source: "mock"
+    tags: ["消费"]
+
+manual_news: []
