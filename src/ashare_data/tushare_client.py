@@ -70,7 +70,7 @@ class TushareClient:
         return self.recent_trade_calendar(days=days, lookback_days=lookback_days)[1]
 
     def stock_basic(self) -> pd.DataFrame:
-        fields = "ts_code,symbol,name,area,industry,market,list_date,act_name,act_ent_type"
+        fields = "ts_code,symbol,name,area,industry,market,list_date,list_status,delist_date,act_name,act_ent_type"
         frames = [
             self._call_with_retry(
                 self._pro.stock_basic,

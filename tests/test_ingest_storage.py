@@ -136,3 +136,42 @@ def test_index_weight_raw_partition_and_upsert_preserve_other_indexes(tmp_path: 
         ("000300.SH", "000001.SZ", "20260530", 3.3),
         ("000905.SH", "000002.SZ", "20260530", 1.8),
     ]
+
+
+def test_initialize_warehouse_adds_new_stock_basic_columns_to_existing_duckdb(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    settings.warehouse_dir.mkdir(parents=True, exist_ok=True)
+
+    with duckdb.connect(str(settings.duckdb_path)) as con:
+        con.execute(
+            """
+            CREATE TABLE stock_basic (
+                ts_code VARCHAR,
+                symbol VARCHAR,
+                name VARCHAR,
+                area VARCHAR,
+                industry VARCHAR,
+                market VARCHAR,
+                list_date VARCHAR,
+                act_name VARCHAR,
+                act_ent_type VARCHAR
+            )
+            """
+        )
+
+    initialize_warehouse(settings)
+
+    with duckdb.connect(str(settings.duckdb_path)) as con:
+        columns = {
+            row[0]
+            for row in con.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'main' AND table_name = 'stock_basic'
+                """
+            ).fetchall()
+        }
+
+    assert "list_status" in columns
+    assert "delist_date" in columns
