@@ -64,7 +64,7 @@ endpoint + trade_date
 - 在内存里用 set 判断是否跳过。
 - 保留 raw parquet 是否存在的校验，避免只有状态没有文件。
 
-## 待办 3：批量入库
+## 待办 3：复用 DuckDB 连接
 
 ### 问题
 
@@ -77,19 +77,26 @@ insert DuckDB 新数据
 写 ingest_status
 ```
 
-DuckDB 连接和小批量写入次数很多。
+每次 DuckDB 操作（`has_successful_ingest` / `upsert_trade_date_table` / `record_ingest_status`）都独立开/关一次连接。TODO 2 做完后状态读取的连接开销消失，但写入侧仍有大量重复连接。
 
-### 目标
+### 方案
 
-- 按 chunk 或按 endpoint 聚合 DataFrame。
-- 同一批次内一次性删除多个 trade_date。
-- 同一批次内一次性 insert。
-- 状态记录也尽量批量写入。
+不改变 per-date 的写入粒度，而是让 `ingest_history` 在整个任务生命周期内复用同一个 DuckDB 连接：
+
+- `storage.py` 的 `upsert_trade_date_table` / `record_ingest_status` / `replace_table` 加可选 `con` 参数。
+- 有 `con` 时直接用，没有时自己开连接（向后兼容）。
+- `ingest_history` 在函数入口开一个 connection，传给所有写操作。
+
+### 为什么不做批量 insert
+
+- per-date 粒度在失败时定位清晰：哪天挂了只影响那天。
+- 批量 insert 后一个日期失败要回滚整批或写补偿逻辑，复杂度上去了收益不大。
+- 连接复用已经解决了主要浪费。
 
 ### 原则
 
 - raw parquet 仍按日期分区保存，方便断点续跑和排查。
-- 失败的日期仍能单独记录，不要因为批量写入丢失错误定位。
+- 失败的日期仍能单独记录。
 
 ## 待办 4：补充退市状态字段
 

@@ -1,0 +1,36 @@
+styles:
+  size:
+    factor_name: size
+    field: total_mv
+    side: high
+    quantile: 0.2
+    top_label: large_cap
+    bottom_label: small_cap
+  valuation:
+    factor_name: valuation
+    field: pb
+    side: low
+    quantile: 0.2
+    top_label: value
+    bottom_label: expensive
+  dividend:
+    factor_name: dividend
+    field: dv_ratio
+    side: high
+    quantile: 0.2
+    top_label: high_dividend
+    bottom_label: low_dividend
+  turnover:
+    factor_name: turnover
+    field: turnover_rate
+    side: high
+    quantile: 0.2
+    top_label: high_turnover
+    bottom_label: low_turnover
+  price:
+    factor_name: price
+    field: close
+    side: low
+    quantile: 0.2
+    top_label: low_price
+    bottom_label: high_price
