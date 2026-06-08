@@ -26,4 +26,12 @@
 
 ## Codex 最终方案
 
-待补最终 commit 后更新。
+与原建议基本一致。
+
+- 实现落在 `src/ashare_radar/`，不拆 repo，不重建数据库。
+- 行业强弱按 `daily_panel.sw_l1_name` 聚合个股收益实现，未额外引入行业指数日行情依赖。
+- 风格分组改为 `configs/ashare_radar/style_buckets.yaml` 配置化，而不是写死在 CLI 层。
+- 报告生成只产出市场状态判断与新闻脉络，不输出买卖建议。
+- 对默认 `reports/ashare_radar/` 目录补了仓库内忽略规则，避免日报产物混进版本库。
+
+对应实现 commit：`c543d2d`
